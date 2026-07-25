@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="color-scheme" content="light">
+        <meta
+            name="description"
+            content="三本 GRE 词书分库学习、SM-2 复习与 17 天计划日历。"
+        >
+        <title>GRE List Lab · 背词计划</title>
+        <link rel="stylesheet" href="gre-vocab.css">
+    </head>
+    <body>
+        <div class="ambient ambient-one" aria-hidden="true"></div>
+        <div class="ambient ambient-two" aria-hidden="true"></div>
+
+        <div class="app-shell">
+            <aside class="sidebar" aria-label="主导航">
+                <a class="brand" href="gre-vocab.html" aria-label="GRE List Lab 首页">
+                    <span class="brand-mark">G</span>
+                    <span>
+                        <strong>GRE List Lab</strong>
+                        <small>按 List，把难词变熟词</small>
+                    </span>
+                </a>
+
+                <nav class="side-nav">
+                    <button class="nav-item is-active" type="button" data-route="dashboard">
+                        <span>⌂</span>今日
+                    </button>
+                    <button class="nav-item" type="button" data-route="books">
+                        <span>▤</span>词书
+                    </button>
+                    <button class="nav-item" type="button" data-route="lists">
+                        <span>☷</span>List
+                    </button>
+                    <button class="nav-item" type="button" data-route="calendar">
+                        <span>□</span>日历
+                    </button>
+                </nav>
+
+                <div class="sidebar-foot">
+                    <div class="mini-streak">
+                        <span class="mini-streak-icon">✦</span>
+                        <div>
+                            <small>连续打卡</small>
+                            <strong><span data-field="streak">0</span> 天</strong>
+                        </div>
+                    </div>
+                    <button class="settings-link" type="button" data-action="open-settings">
+                        学习设置 <span>›</span>
+                    </button>
+                    <a class="back-link" href="index.html">返回原网页</a>
+                </div>
+            </aside>
+
+            <main class="main">
+                <header class="topbar">
+                    <button class="mobile-menu" type="button" data-action="mobile-menu" aria-label="打开导航">
+                        ☰
+                    </button>
+                    <div class="book-switch">
+                        <span class="book-dot" data-field="book-dot"></span>
+                        <select data-field="book-select" aria-label="切换词书"></select>
+                    </div>
+                    <div class="topbar-actions">
+                        <span class="today-label" data-field="today-label"></span>
+                        <button class="icon-button" type="button" data-action="open-settings" aria-label="学习设置">
+                            ⚙
+                        </button>
+                    </div>
+                </header>
+
+                <section class="route is-active" data-view="dashboard" aria-labelledby="dashboard-title">
+                    <div id="dashboard-content"></div>
+                </section>
+
+                <section class="route" data-view="books" aria-labelledby="books-title">
+                    <div id="books-content"></div>
+                </section>
+
+                <section class="route" data-view="lists" aria-labelledby="lists-title">
+                    <div id="lists-content"></div>
+                </section>
+
+                <section class="route" data-view="calendar" aria-labelledby="calendar-title">
+                    <div id="calendar-content"></div>
+                </section>
+
+                <section class="route study-route" data-view="study" aria-labelledby="study-title">
+                    <div id="study-content"></div>
+                </section>
+            </main>
+        </div>
+
+        <div class="modal" data-modal="settings" hidden>
+            <button class="modal-backdrop" type="button" data-action="close-settings" aria-label="关闭设置"></button>
+            <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+                <div class="modal-head">
+                    <div>
+                        <span class="eyebrow">PERSONAL RHYTHM</span>
+                        <h2 id="settings-title">学习设置</h2>
+                    </div>
+                    <button class="icon-button" type="button" data-action="close-settings" aria-label="关闭">×</button>
+                </div>
+                <form id="settings-form">
+                    <label>
+                        <span>每日新词</span>
+                        <small>当天最多进入学习流程的新词数</small>
+                        <input name="dailyNew" type="number" min="1" max="200" required>
+                    </label>
+                    <label>
+                        <span>每日复习上限</span>
+                        <small>到期旧词的单日处理上限</small>
+                        <input name="reviewLimit" type="number" min="1" max="300" required>
+                    </label>
+                    <label>
+                        <span>掌握标准</span>
+                        <small>累计正确多少次后计入“已掌握”</small>
+                        <input name="masteryCount" type="number" min="1" max="10" required>
+                    </label>
+                    <div class="modal-actions">
+                        <button class="button button-ghost" type="button" data-action="close-settings">取消</button>
+                        <button class="button button-primary" type="submit">保存设置</button>
+                    </div>
+                </form>
+                <div class="data-tools">
+                    <strong>进度备份</strong>
+                    <p>只导出学习记录和日历打卡，不包含词书原文。</p>
+                    <div>
+                        <button class="button button-soft" type="button" data-action="export-progress">导出进度</button>
+                        <button class="button button-soft" type="button" data-action="import-progress">导入进度</button>
+                        <input data-field="progress-file" type="file" accept=".json,application/json" hidden>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="toast-region" aria-live="polite" aria-atomic="true"></div>
+
+        <script src="books.js"></script>
+        <script src="gre-vocab-app.js"></script>
+    </body>
+</html>
