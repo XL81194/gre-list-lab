@@ -6,7 +6,8 @@
     const BACKUP_VERSION = 1;
     const REVIEW_OFFSETS = [0, 1, 3, 7, 14, 29];
     const MAX_INTRA_CYCLES = 12;
-    const BATCH_SIZE = 24;
+    const BATCH_SIZE = 20;
+    const MEANING_FLOW_VERSION = 2;
     const QUALITY_SCORE = { wrong: 0, hard: 3, good: 4, easy: 5 };
     const INITIAL_EF = { easy: 2.8, good: 2.5, hard: 1.8, wrong: 1.3 };
     const INTRA_EF = { easy: 0.15, good: 0.05, hard: -0.1, wrong: -0.2 };
@@ -194,6 +195,10 @@
             return;
         }
         session = JSON.parse(JSON.stringify(saved));
+        if (session.studyMode === "meaning" && session.flowVersion !== MEANING_FLOW_VERSION) {
+            restartMeaningSessionAsMicroLoop();
+            toast("学习流程已升级：本组词将按新的穿插强化方式重新开始。");
+        }
         navigate("study");
     }
 
@@ -454,7 +459,7 @@
             .slice(0, 4);
         const savedSession = savedSessionForBook(book);
         const savedRound = savedSession?.studyMode === "meaning"
-            ? `第 ${savedSession.meaningRound || 1} 轮`
+            ? "20 词微循环"
             : "拼写检测";
         const todayPlan = todayTasks.length
             ? todayTasks
@@ -474,7 +479,7 @@
                 <div class="hero-copy">
                     <span class="eyebrow">TODAY · ${escapeHtml(formatLongDate(new Date()))}</span>
                     <h1>今天，把一组难词<br>变成你的词。</h1>
-                    <p>${escapeHtml(book.title)}已按原书分组。词义训练分三轮：先判断是否认识，再做英译汉四选一，最后用中文填空；需要掌握完整英文拼写时，可单独进入拼写检测。</p>
+                    <p>${escapeHtml(book.title)}已按原书分组。每次严格按 List 原顺序学习 20 词；认识判断、英译汉选义和中文填义会穿插进行，模糊或不认识的词会在本组中自动多次复现。</p>
                     <div class="hero-actions">
                         ${
                             savedSession
@@ -482,7 +487,7 @@
                                 : ""
                         }
                         <button class="button button-primary" type="button" data-action="start-today" data-study-mode="meaning">
-                            ${savedSession ? "开始新的三轮训练" : stats.due ? `三轮刷词义 · ${stats.due}` : "三轮刷词义"}
+                            ${savedSession ? "开始新的 20 词组" : stats.due ? `20 词微循环 · ${stats.due}` : "开始 20 词微循环"}
                         </button>
                         <button class="button button-outline-light" type="button" data-action="start-today" data-study-mode="spelling">拼写检测</button>
                         <button class="button button-outline-light" type="button" data-route="calendar">查看计划日历</button>
@@ -587,7 +592,7 @@
                             <span class="progress-track"><span style="width:${stats.learnedPercent}%"></span></span>
                             <div class="book-card-actions">
                                 <button class="button button-soft" type="button" data-action="open-book-lists" data-book-id="${escapeHtml(book.id)}">查看分组</button>
-                                <button class="button button-dark" type="button" data-action="study-book" data-study-mode="meaning" data-book-id="${escapeHtml(book.id)}">三轮词义</button>
+                                <button class="button button-dark" type="button" data-action="study-book" data-study-mode="meaning" data-book-id="${escapeHtml(book.id)}">20 词微循环</button>
                                 <button class="button button-soft" type="button" data-action="study-book" data-study-mode="spelling" data-book-id="${escapeHtml(book.id)}">练拼写</button>
                             </div>
                         </article>
@@ -624,7 +629,7 @@
             <div class="lists-toolbar">
                 <div class="search-box"><span>⌕</span><input data-field="list-search" type="search" value="${escapeHtml(ui.listQuery)}" placeholder="搜索 List 或单词"></div>
                 <div class="toolbar-actions">
-                    <button class="button button-dark" type="button" data-action="start-today" data-study-mode="meaning">三轮刷词义</button>
+                    <button class="button button-dark" type="button" data-action="start-today" data-study-mode="meaning">20 词微循环</button>
                     <button class="button button-soft" type="button" data-action="start-today" data-study-mode="spelling">拼写检测</button>
                 </div>
             </div>
@@ -647,7 +652,7 @@
                             <div class="list-card-foot">
                                 <small>${stats.learned}/${stats.total} 已学 · ${stats.mastered} 掌握</small>
                                 <div class="list-card-buttons">
-                                    <button type="button" data-action="study-group" data-study-mode="meaning" data-group-id="${escapeHtml(group.id)}">三轮词义</button>
+                                    <button type="button" data-action="study-group" data-study-mode="meaning" data-group-id="${escapeHtml(group.id)}">20 词微循环</button>
                                     <button type="button" data-action="study-group" data-study-mode="spelling" data-group-id="${escapeHtml(group.id)}">练拼写</button>
                                 </div>
                             </div>
@@ -836,8 +841,15 @@
             : allWords(book);
         let candidates = [];
 
+        const groupSize = clamp(state.settings.dailyNew, 1, BATCH_SIZE);
         if (mode === "group") {
-            candidates = scopedWords.slice();
+            const unseen = scopedWords.filter(
+                (word) => !getProgress(book.id, word.id).lastReviewed
+            );
+            candidates = (unseen.length ? unseen : dueWords(book, scopedWords)).slice(
+                0,
+                options.studyMode === "spelling" ? state.settings.reviewLimit : groupSize
+            );
         } else if (mode === "plan-review") {
             candidates = scopedWords
                 .slice()
@@ -849,16 +861,24 @@
                     }
                     return (aProgress.correctCount || 0) - (bProgress.correctCount || 0);
                 })
-                .slice(0, state.settings.reviewLimit);
+                .slice(
+                    0,
+                    options.studyMode === "spelling"
+                        ? state.settings.reviewLimit
+                        : groupSize
+                );
         } else {
-            const due = dueWords(book).slice(
-                0,
-                state.settings.reviewLimit
-            );
             const newWords = scopedWords
                 .filter((word) => !getProgress(book.id, word.id).lastReviewed)
-                .slice(0, state.settings.dailyNew);
-            candidates = uniqueWords([...due, ...newWords]);
+                .slice(0, groupSize);
+            candidates = newWords.length
+                ? newWords
+                : dueWords(book, scopedWords).slice(
+                      0,
+                      options.studyMode === "spelling"
+                          ? state.settings.reviewLimit
+                          : groupSize
+                  );
         }
 
         if (!candidates.length) {
@@ -871,6 +891,8 @@
             title: scopedGroups.length ? groupRangeLabel(scopedGroups) : "今日综合任务",
             studyMode: options.studyMode === "spelling" ? "spelling" : "meaning",
             sourceTaskKey: options.taskKey || null,
+            sourceTaskType: options.taskType || null,
+            sourceGroupIds: scopedGroups.map((group) => group.id),
             pendingIds:
                 options.studyMode === "spelling" ? candidates.map((word) => word.id) : [],
             roundWordIds: candidates.map((word) => word.id),
@@ -882,6 +904,11 @@
             typed: "",
             meaningVisible: false,
             meaningRound: 1,
+            flowVersion:
+                options.studyMode === "spelling" ? null : MEANING_FLOW_VERSION,
+            scheduledCount:
+                options.studyMode === "spelling" ? candidates.length : candidates.length,
+            completedWordIds: [],
             roundResults: {},
             answeredCount: 0,
             totalTarget: candidates.length,
@@ -903,6 +930,8 @@
         if (session.studyMode === "meaning") {
             session.activeQueue = session.roundWordIds.map((wordId) => ({
                 wordId,
+                step: "recognition",
+                attempt: 1,
                 tempProgress: null,
                 intraReview: false,
                 cycleType: "normal",
@@ -932,7 +961,12 @@
         if (!session.activeQueue.length) {
             session.current = null;
             if (session.studyMode === "meaning") {
-                session.stage = session.meaningRound < 3 ? "round-finished" : "complete";
+                session.stage =
+                    session.flowVersion === MEANING_FLOW_VERSION
+                        ? "complete"
+                        : session.meaningRound < 3
+                          ? "round-finished"
+                          : "complete";
             } else {
                 session.stage = session.pendingIds.length ? "batch-finished" : "complete";
             }
@@ -946,10 +980,14 @@
         }
         session.current = session.activeQueue.shift();
         session.recognitionQuality = session.studyMode === "spelling" ? "easy" : null;
-        session.stage =
-            session.studyMode === "spelling"
-                ? "spelling"
-                : `meaning-round-${session.meaningRound || 1}`;
+        if (session.studyMode === "spelling") {
+            session.stage = "spelling";
+        } else {
+            const step = session.current.step || "recognition";
+            const stepNumber = { recognition: 1, choice: 2, input: 3 }[step] || 1;
+            session.meaningRound = stepNumber;
+            session.stage = `meaning-round-${stepNumber}`;
+        }
         if (session.stage === "meaning-round-2") {
             session.current.choiceOptions = buildMeaningChoices(sessionBook(), sessionWord());
         }
@@ -963,6 +1001,75 @@
         }
         session.meaningRound += 1;
         loadNextBatch();
+    }
+
+    function restartMeaningSessionAsMicroLoop() {
+        if (!session || session.studyMode !== "meaning") {
+            return;
+        }
+        session.flowVersion = MEANING_FLOW_VERSION;
+        session.activeQueue = session.roundWordIds.map((wordId) => ({
+            wordId,
+            step: "recognition",
+            attempt: 1,
+            tempProgress: null,
+            intraReview: false,
+            cycleType: "normal",
+        }));
+        session.current = null;
+        session.stage = "loading";
+        session.meaningRound = 1;
+        session.roundResults = {};
+        session.answeredCount = 0;
+        session.scheduledCount = session.roundWordIds.length;
+        session.completedWordIds = [];
+        session.completed = 0;
+        session.correct = 0;
+        session.near = 0;
+        session.wrong = 0;
+        moveToNextWord();
+    }
+
+    function queueMeaningStep(wordId, step, gap, details = {}) {
+        if (!session || session.studyMode !== "meaning") {
+            return;
+        }
+        const position = Math.min(
+            session.activeQueue.length,
+            Math.max(0, Number(gap) || 0)
+        );
+        session.activeQueue.splice(position, 0, {
+            wordId,
+            step,
+            attempt: Number(details.attempt || 1),
+            reinforcement: Boolean(details.reinforcement),
+            tempProgress: null,
+            intraReview: false,
+            cycleType: "micro-loop",
+        });
+        session.scheduledCount = Number(session.scheduledCount || 0) + 1;
+    }
+
+    function meaningResultFor(wordId) {
+        if (!session.roundResults[wordId]) {
+            session.roundResults[wordId] = {
+                recognitionHistory: [],
+                choiceHistory: [],
+                inputScheduled: false,
+            };
+        }
+        const result = session.roundResults[wordId];
+        result.recognitionHistory = Array.isArray(result.recognitionHistory)
+            ? result.recognitionHistory
+            : result.round1
+              ? [result.round1]
+              : [];
+        result.choiceHistory = Array.isArray(result.choiceHistory)
+            ? result.choiceHistory
+            : result.round2
+              ? [result.round2]
+              : [];
+        return result;
     }
 
     function sessionWord() {
@@ -1185,7 +1292,9 @@
         const book = sessionBook();
         const word = sessionWord();
         const totalSteps =
-            session.studyMode === "meaning" ? session.totalTarget * 3 : session.totalTarget;
+            session.studyMode === "meaning"
+                ? Math.max(session.scheduledCount || 0, session.answeredCount || 0, 1)
+                : session.totalTarget;
         const totalDone =
             session.studyMode === "meaning"
                 ? Math.min(session.answeredCount || 0, totalSteps)
@@ -1202,7 +1311,7 @@
                         <button class="save-exit-button" type="button" data-action="save-and-leave-study" aria-label="保存进度并退出">← 保存并退出</button>
                         <div>
                             <h1 id="study-title">${escapeHtml(session.title)}</h1>
-                            <p>${escapeHtml(book?.title || "")} · ${session.studyMode === "spelling" ? "进阶拼写检测" : `三轮词义训练 · 第 ${session.meaningRound || 1} 轮`}</p>
+                            <p>${escapeHtml(book?.title || "")} · ${session.studyMode === "spelling" ? "进阶拼写检测" : `20 词微循环 · ${session.meaningRound === 1 ? "认识判断" : session.meaningRound === 2 ? "英译汉选义" : "中文释义填空"}`}</p>
                         </div>
                     </div>
                     <div class="study-progress">
@@ -1242,7 +1351,7 @@
                 </div>
             `;
         }
-        if (session.stage === "round-finished") {
+        if (session.stage === "round-finished" && session.flowVersion !== MEANING_FLOW_VERSION) {
             const finishedRound = session.meaningRound || 1;
             const nextRound = finishedRound + 1;
             const nextLabel =
@@ -1264,8 +1373,11 @@
             `;
         }
         if (session.stage === "complete") {
+            const sourceStats = sessionSourceStats();
             if (session.sourceTaskKey) {
-                state.calendarChecks[session.sourceTaskKey] = true;
+                state.calendarChecks[session.sourceTaskKey] =
+                    session.sourceTaskType === "review" ||
+                    (sourceStats.total > 0 && sourceStats.remaining === 0);
                 saveState();
             }
             const accuracy = session.completed
@@ -1275,8 +1387,14 @@
                 <div class="session-finish">
                     <div>
                         <span class="finish-mark">✦</span>
-                        <h2>本轮完成</h2>
-                        <p>这次学习已经写入本机进度。系统会根据三轮表现安排下一次复习。</p>
+                        <h2>这组 ${session.totalTarget} 词完成</h2>
+                        <p>${
+                            sourceStats.total
+                                ? sourceStats.remaining
+                                    ? `进度已保存。当前大 List 任务还剩 ${sourceStats.remaining} 个未学词；下一组会严格从后续词继续。`
+                                    : "本次大 List 任务中的词已经全部学习完成。"
+                                : "这次学习已经写入本机进度，下一次会从后续词继续。"
+                        }</p>
                         <div class="finish-stats">
                             <span><strong>${session.completed}</strong><small>完成词数</small></span>
                             <span><strong>${accuracy}%</strong><small>一次通过率</small></span>
@@ -1295,7 +1413,7 @@
             return `
                 <div class="study-meta">
                     <span>${escapeHtml(context?.group.label || "")}</span>
-                    <span>第 1 轮 · 认识判断</span>
+                    <span>${session.current.reinforcement ? "再次确认 · 认识判断" : "步骤 1 · 认识判断"}</span>
                 </div>
                 <div class="study-word">${escapeHtml(word.word)}</div>
                 <div class="phonetic">
@@ -1315,7 +1433,7 @@
             return `
                 <div class="study-meta">
                     <span>${escapeHtml(context?.group.label || "")}</span>
-                    <span>第 2 轮 · 英译汉四选一</span>
+                    <span>${session.current.reinforcement ? "加固 · 英译汉四选一" : "步骤 2 · 英译汉四选一"}</span>
                 </div>
                 <div class="study-word choice-word">${escapeHtml(word.word)}</div>
                 <div class="phonetic">
@@ -1341,7 +1459,7 @@
             return `
                 <div class="study-meta">
                     <span>${escapeHtml(context?.group.label || "")}</span>
-                    <span>第 3 轮 · 中文释义填空</span>
+                    <span>步骤 3 · 中文释义填空</span>
                 </div>
                 <div class="study-word choice-word">${escapeHtml(word.word)}</div>
                 <div class="phonetic">
@@ -1404,7 +1522,9 @@
             const icon = result.status === "correct" ? "✓" : result.status === "near" ? "↻" : "!";
             const primaryMeaning = chineseMeaning(word.meaning);
             const scheduleText = result.roundOnly
-                ? `第 ${result.round} 轮结果已记录，完成三轮后统一安排复习`
+                ? result.reinforcementScheduled
+                    ? "已自动加入本组后续加固，稍后会再次出现"
+                    : "已记录到本组记忆轨迹"
                 : result.saved
                   ? `下次复习：${formatShortDate(progress.nextReview)}`
                   : result.verification
@@ -1442,7 +1562,7 @@
                         <div class="answer-cell"><small>${responseLabel}</small><strong>${escapeHtml(result.typed || "已跳过")}</strong></div>
                         ${
                             result.roundOnly
-                                ? `<div class="answer-cell"><small>本轮位置</small><strong>第 ${result.round} 轮 · ${session.answeredCount}/${session.totalTarget * 3}</strong></div>`
+                                ? `<div class="answer-cell"><small>微循环进度</small><strong>${session.answeredCount}/${Math.max(session.scheduledCount || 0, session.answeredCount || 0)}</strong></div>`
                                 : `<div class="answer-cell"><small>记忆参数</small><strong>EF ${Number(progress.easeFactor || 1.3).toFixed(2)} · 间隔 ${progress.interval || 1} 天 · 正确 ${progress.correctCount || 0} 次</strong></div>`
                         }
                         <div class="answer-cell is-wide"><small>原书完整释义</small><strong>${escapeHtml(word.meaning)}</strong></div>
@@ -1541,10 +1661,63 @@
             wrong: "不认识",
         };
         const word = sessionWord();
-        session.roundResults[word.id] = {
-            ...(session.roundResults[word.id] || {}),
-            round1: quality,
-        };
+        const result = meaningResultFor(word.id);
+        result.round1 = quality;
+        result.recognitionHistory.push(quality);
+        const attempt = result.recognitionHistory.length;
+        let reinforcementScheduled = false;
+        if (attempt === 1) {
+            if (quality === "easy") {
+                queueMeaningStep(word.id, "choice", 4, { attempt: 1 });
+            } else if (quality === "good") {
+                queueMeaningStep(word.id, "choice", 2, {
+                    attempt: 1,
+                    reinforcement: true,
+                });
+                queueMeaningStep(word.id, "recognition", 6, {
+                    attempt: 2,
+                    reinforcement: true,
+                });
+                reinforcementScheduled = true;
+            } else {
+                queueMeaningStep(word.id, "choice", 1, {
+                    attempt: 1,
+                    reinforcement: true,
+                });
+                queueMeaningStep(word.id, "recognition", 4, {
+                    attempt: 2,
+                    reinforcement: true,
+                });
+                queueMeaningStep(word.id, "choice", 7, {
+                    attempt: 2,
+                    reinforcement: true,
+                });
+                reinforcementScheduled = true;
+            }
+        } else if (quality !== "easy") {
+            const pendingChoices = session.activeQueue.filter(
+                (item) => item.wordId === word.id && item.step === "choice"
+            ).length;
+            const targetChoices = quality === "wrong" ? 3 : 2;
+            if (result.choiceHistory.length + pendingChoices < targetChoices) {
+                queueMeaningStep(word.id, "choice", quality === "wrong" ? 2 : 4, {
+                    attempt: result.choiceHistory.length + pendingChoices + 1,
+                    reinforcement: true,
+                });
+            }
+            if (quality === "wrong" && attempt < 3) {
+                const hasPendingRecognition = session.activeQueue.some(
+                    (item) => item.wordId === word.id && item.step === "recognition"
+                );
+                if (!hasPendingRecognition) {
+                    queueMeaningStep(word.id, "recognition", 6, {
+                        attempt: attempt + 1,
+                        reinforcement: true,
+                    });
+                }
+            }
+            reinforcementScheduled = true;
+        }
         session.answeredCount += 1;
         session.lastResult = {
             status: quality === "easy" ? "correct" : quality === "good" ? "near" : "wrong",
@@ -1554,6 +1727,7 @@
             mode: "meaning-self",
             roundOnly: true,
             round: 1,
+            reinforcementScheduled,
             saved: false,
             verification: false,
         };
@@ -1573,10 +1747,27 @@
             return;
         }
         const correct = Boolean(selected.correct);
-        session.roundResults[word.id] = {
-            ...(session.roundResults[word.id] || {}),
-            round2: correct ? "correct" : "wrong",
-        };
+        const result = meaningResultFor(word.id);
+        result.round2 = correct ? "correct" : "wrong";
+        result.choiceHistory.push(correct ? "correct" : "wrong");
+        const choiceAttempts = result.choiceHistory.length;
+        let reinforcementScheduled = false;
+        const pendingChoiceCount = session.activeQueue.filter(
+            (item) => item.wordId === word.id && item.step === "choice"
+        ).length;
+        if (!correct && choiceAttempts + pendingChoiceCount < 3) {
+            queueMeaningStep(word.id, "choice", 3, {
+                attempt: choiceAttempts + 1,
+                reinforcement: true,
+            });
+            reinforcementScheduled = true;
+        }
+        if (!result.inputScheduled && (correct || choiceAttempts >= 2)) {
+            queueMeaningStep(word.id, "input", correct ? 5 : 6, {
+                attempt: 1,
+            });
+            result.inputScheduled = true;
+        }
         session.answeredCount += 1;
         session.lastResult = {
             status: correct ? "correct" : "wrong",
@@ -1586,6 +1777,7 @@
             mode: "meaning-choice",
             roundOnly: true,
             round: 2,
+            reinforcementScheduled,
             saved: false,
             verification: false,
         };
@@ -1595,14 +1787,27 @@
     }
 
     function overallMeaningQuality(wordId, semanticStatus) {
-        const result = session.roundResults[wordId] || {};
-        const firstScore =
-            result.round1 === "easy" ? 2 : result.round1 === "good" ? 1 : 0;
-        const secondScore = result.round2 === "correct" ? 2 : 0;
-        const thirdScore =
-            semanticStatus === "correct" ? 2 : semanticStatus === "close" ? 1 : 0;
-        const total = firstScore + secondScore + thirdScore;
-        return total >= 5 ? "easy" : total >= 3 ? "good" : total >= 2 ? "hard" : "wrong";
+        const result = meaningResultFor(wordId);
+        const latestRecognition =
+            result.recognitionHistory[result.recognitionHistory.length - 1] ||
+            result.round1 ||
+            "wrong";
+        const correctChoices = result.choiceHistory.filter(
+            (item) => item === "correct"
+        ).length;
+        const allChoicesCorrect =
+            result.choiceHistory.length > 0 &&
+            correctChoices === result.choiceHistory.length;
+        if (semanticStatus === "wrong") {
+            return "wrong";
+        }
+        if (semanticStatus === "close") {
+            return latestRecognition === "wrong" || !correctChoices ? "hard" : "good";
+        }
+        if (latestRecognition === "easy" && allChoicesCorrect) {
+            return "easy";
+        }
+        return correctChoices ? "good" : "hard";
     }
 
     function commitMeaningInput(semanticStatus) {
@@ -1626,6 +1831,21 @@
         };
         session.pendingSemantic = null;
         session.answeredCount += 1;
+        if (semanticStatus === "wrong") {
+            queueMeaningStep(word.id, "choice", 2, {
+                attempt: meaningResultFor(word.id).choiceHistory.length + 1,
+                reinforcement: true,
+            });
+            queueMeaningStep(word.id, "recognition", 5, {
+                attempt: meaningResultFor(word.id).recognitionHistory.length + 1,
+                reinforcement: true,
+            });
+        } else if (semanticStatus === "close") {
+            queueMeaningStep(word.id, "choice", 4, {
+                attempt: meaningResultFor(word.id).choiceHistory.length + 1,
+                reinforcement: true,
+            });
+        }
         applyStudyResult({
             skipped: false,
             typed: pending.typed,
@@ -1782,7 +2002,13 @@
 
         if (saved) {
             setProgress(book.id, word.id, nextProgress);
-            session.completed += 1;
+            session.completedWordIds = Array.isArray(session.completedWordIds)
+                ? session.completedWordIds
+                : [];
+            if (!session.completedWordIds.includes(word.id)) {
+                session.completedWordIds.push(word.id);
+                session.completed += 1;
+            }
             if (quality === "wrong") {
                 session.wrong += 1;
             } else if (needsReinforcement) {
@@ -1843,6 +2069,27 @@
         utterance.lang = "en-US";
         utterance.rate = 0.82;
         window.speechSynthesis.speak(utterance);
+    }
+
+    function sessionSourceStats() {
+        const book = sessionBook();
+        const groupIds = Array.isArray(session?.sourceGroupIds)
+            ? session.sourceGroupIds
+            : [];
+        if (!book || !groupIds.length) {
+            return { total: 0, learned: 0, remaining: 0 };
+        }
+        const words = groupIds.flatMap(
+            (groupId) => groupIndex.get(`${book.id}:${groupId}`)?.words || []
+        );
+        const learned = words.filter(
+            (word) => getProgress(book.id, word.id).lastReviewed
+        ).length;
+        return {
+            total: words.length,
+            learned,
+            remaining: Math.max(0, words.length - learned),
+        };
     }
 
     function openSettings() {
@@ -1997,6 +2244,7 @@
                     mode: task.type === "review" ? "plan-review" : "group",
                     groupIds: task.groupIds,
                     taskKey: task.key,
+                    taskType: task.type,
                     studyMode: "meaning",
                 });
             }
@@ -2091,7 +2339,7 @@
         event.preventDefault();
         const data = new FormData(event.currentTarget);
         state.settings = {
-            dailyNew: clamp(data.get("dailyNew"), 1, 200),
+            dailyNew: clamp(data.get("dailyNew"), 5, BATCH_SIZE),
             reviewLimit: clamp(data.get("reviewLimit"), 1, 300),
             masteryCount: clamp(data.get("masteryCount"), 1, 10),
         };
