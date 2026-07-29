@@ -1,8 +1,8 @@
 (function initGreVocabApp(window, document) {
     "use strict";
 
-    const BOOKS = Array.isArray(window.GRE_VOCAB_BOOKS) ? window.GRE_VOCAB_BOOKS : [];
     const STORAGE_KEY = "gre-list-lab-state-v1";
+    const CUSTOM_BOOKS_KEY = "gre-list-lab-custom-books-v1";
     const BACKUP_VERSION = 1;
     const REVIEW_OFFSETS = [0, 1, 3, 7, 14, 29];
     const MAX_INTRA_CYCLES = 12;
@@ -12,17 +12,42 @@
     const INITIAL_EF = { easy: 2.8, good: 2.5, hard: 1.8, wrong: 1.3 };
     const INTRA_EF = { easy: 0.15, good: 0.05, hard: -0.1, wrong: -0.2 };
     const DEFAULT_SETTINGS = { dailyNew: 20, reviewLimit: 100, masteryCount: 4 };
+    const DEFAULT_PLAN = {
+        startDate: "",
+        mode: "lists",
+        listsPerDay: 2,
+        wordsPerDay: 100,
+    };
+
+    function loadCustomBooks() {
+        try {
+            const parsed = JSON.parse(window.localStorage.getItem(CUSTOM_BOOKS_KEY) || "[]");
+            return Array.isArray(parsed) ? parsed.filter((book) => book?.id && Array.isArray(book.groups)) : [];
+        } catch (error) {
+            console.warn("[GRE List Lab] 无法读取自定义词书", error);
+            return [];
+        }
+    }
+
+    const BUILT_IN_BOOKS = Array.isArray(window.GRE_VOCAB_BOOKS)
+        ? window.GRE_VOCAB_BOOKS
+        : [];
+    const BOOKS = [...BUILT_IN_BOOKS, ...loadCustomBooks()];
 
     const wordIndex = new Map();
     const groupIndex = new Map();
-    BOOKS.forEach((book) => {
+    function indexBook(book) {
+        if (!book || !Array.isArray(book.groups)) {
+            return;
+        }
         book.groups.forEach((group) => {
             groupIndex.set(`${book.id}:${group.id}`, group);
             group.words.forEach((word) => {
                 wordIndex.set(word.id, { book, group, word });
             });
         });
-    });
+    }
+    BOOKS.forEach(indexBook);
 
     const ui = {
         calendarMonth: firstOfMonth(new Date()),
@@ -38,7 +63,7 @@
         const today = localDateKey(new Date());
         const plans = {};
         BOOKS.forEach((book) => {
-            plans[book.id] = { startDate: today };
+            plans[book.id] = { ...DEFAULT_PLAN, startDate: today };
         });
         return {
             version: BACKUP_VERSION,
@@ -76,7 +101,15 @@
                     saved.calendarChecks && typeof saved.calendarChecks === "object"
                         ? saved.calendarChecks
                         : {},
-                plans: { ...fallback.plans, ...(saved.plans || {}) },
+                plans: Object.fromEntries(
+                    BOOKS.map((book) => [
+                        book.id,
+                        {
+                            ...fallback.plans[book.id],
+                            ...(saved.plans?.[book.id] || {}),
+                        },
+                    ])
+                ),
             };
         } catch (error) {
             console.warn("[GRE List Lab] 无法读取本地进度", error);
@@ -304,15 +337,42 @@
         if (!book) {
             return [];
         }
-        const startDate = parseLocalDate(state.plans[book.id]?.startDate || localDateKey(new Date()));
+        const planSettings = {
+            ...DEFAULT_PLAN,
+            startDate: localDateKey(new Date()),
+            ...(state.plans[book.id] || {}),
+        };
+        const startDate = parseLocalDate(planSettings.startDate);
         const tasks = [];
-        for (let index = 0; index < book.groups.length; index += 2) {
-            const groupSlice = book.groups.slice(index, index + 2);
-            const groupIds = groupSlice.map((group) => group.id);
-            const label = groupRangeLabel(groupSlice);
-            const learningDate = addDays(startDate, Math.floor(index / 2));
+        const scopes = [];
+        if (planSettings.mode === "words") {
+            const words = allWords(book);
+            const wordsPerDay = clamp(planSettings.wordsPerDay, 1, 1000);
+            for (let index = 0; index < words.length; index += wordsPerDay) {
+                const wordSlice = words.slice(index, index + wordsPerDay);
+                scopes.push({
+                    label: `第 ${index + 1}–${index + wordSlice.length} 词`,
+                    wordIds: wordSlice.map((word) => word.id),
+                    groupIds: [...new Set(wordSlice.map((word) => word.groupId))],
+                    scopeKey: `words-${index + 1}-${index + wordSlice.length}`,
+                });
+            }
+        } else {
+            const listsPerDay = clamp(planSettings.listsPerDay, 1, 20);
+            for (let index = 0; index < book.groups.length; index += listsPerDay) {
+                const groupSlice = book.groups.slice(index, index + listsPerDay);
+                scopes.push({
+                    label: groupRangeLabel(groupSlice),
+                    wordIds: groupSlice.flatMap((group) => group.words.map((word) => word.id)),
+                    groupIds: groupSlice.map((group) => group.id),
+                    scopeKey: `lists-${index + 1}-${index + groupSlice.length}`,
+                });
+            }
+        }
+        scopes.forEach((scope, dayIndex) => {
+            const learningDate = addDays(startDate, dayIndex);
             tasks.push(
-                createPlanTask(book, learningDate, "learn", label, groupIds, 0, startDate)
+                createPlanTask(book, learningDate, "learn", scope, 0, startDate)
             );
             REVIEW_OFFSETS.forEach((offset) => {
                 tasks.push(
@@ -320,14 +380,13 @@
                         book,
                         addDays(learningDate, offset),
                         "review",
-                        label,
-                        groupIds,
+                        scope,
                         offset,
                         startDate
                     )
                 );
             });
-        }
+        });
         tasks.sort((a, b) => {
             if (a.date !== b.date) {
                 return a.date.localeCompare(b.date);
@@ -337,7 +396,7 @@
         return tasks;
     }
 
-    function createPlanTask(book, date, type, label, groupIds, offset, startDate) {
+    function createPlanTask(book, date, type, scope, offset, startDate) {
         const dateKey = localDateKey(date);
         const planStart = localDateKey(startDate);
         const key = [
@@ -346,17 +405,24 @@
             dateKey,
             type,
             offset,
-            groupIds.join(","),
+            scope.scopeKey,
         ].join("|");
+        const learnedCount = scope.wordIds.filter(
+            (wordId) => getProgress(book.id, wordId).lastReviewed
+        ).length;
         return {
             key,
             bookId: book.id,
             date: dateKey,
             type,
-            label,
-            groupIds,
+            label: scope.label,
+            groupIds: scope.groupIds,
+            wordIds: scope.wordIds,
             offset,
-            done: Boolean(state.calendarChecks[key]),
+            done:
+                type === "learn"
+                    ? scope.wordIds.length > 0 && learnedCount === scope.wordIds.length
+                    : Boolean(state.calendarChecks[key]),
         };
     }
 
@@ -479,17 +545,20 @@
                 <div class="hero-copy">
                     <span class="eyebrow">TODAY · ${escapeHtml(formatLongDate(new Date()))}</span>
                     <h1>今天，把一组难词<br>变成你的词。</h1>
-                    <p>${escapeHtml(book.title)}已按原书分组。每次严格按 List 原顺序学习 20 词；认识判断、英译汉选义和中文填义会穿插进行，模糊或不认识的词会在本组中自动多次复现。</p>
+                    <p>${escapeHtml(book.title)}已按原书顺序分组。学新词与到期复习分开进入；每组最多 20 词，模糊或不认识的词会在组内自动多次复现。</p>
                     <div class="hero-actions">
                         ${
                             savedSession
                                 ? `<button class="button button-primary" type="button" data-action="resume-study">继续上次学习 · ${savedRound}</button>`
                                 : ""
                         }
-                        <button class="button button-primary" type="button" data-action="start-today" data-study-mode="meaning">
-                            ${savedSession ? "开始新的 20 词组" : stats.due ? `20 词微循环 · ${stats.due}` : "开始 20 词微循环"}
+                        <button class="button button-primary" type="button" data-action="start-new" data-study-mode="meaning">
+                            学习新词 · ${Math.min(state.settings.dailyNew, stats.newCount)}
                         </button>
-                        <button class="button button-outline-light" type="button" data-action="start-today" data-study-mode="spelling">拼写检测</button>
+                        <button class="button button-outline-light" type="button" data-action="start-review" data-study-mode="meaning">
+                            到期复习 · ${stats.due}
+                        </button>
+                        <button class="button button-outline-light" type="button" data-action="start-review" data-study-mode="spelling">拼写检测</button>
                         <button class="button button-outline-light" type="button" data-route="calendar">查看计划日历</button>
                     </div>
                 </div>
@@ -515,7 +584,7 @@
             <div class="dashboard-lower">
                 <section class="panel">
                     <div class="panel-head">
-                        <h2>三本词书，各自进度</h2>
+                    <h2>${BOOKS.length} 本词书，各自进度</h2>
                         <button class="text-button" type="button" data-route="books">管理词书 →</button>
                     </div>
                     ${BOOKS.map((item) => {
@@ -569,10 +638,11 @@
         target.innerHTML = `
             <div class="page-heading">
                 <div>
-                    <span class="eyebrow">THREE SEPARATE LIBRARIES</span>
-                    <h1 id="books-title">三本词书，绝不混库。</h1>
-                    <p>每本书保留自己的顺序、List/Day 分组和学习记录。切换词书不会把另一册的单词插进当前复习队列。</p>
+                    <span class="eyebrow">SEPARATE LIBRARIES</span>
+                    <h1 id="books-title">每本词书，独立进度。</h1>
+                    <p>每本书保留自己的顺序、List 分组、计划和学习记录。切换词书不会把另一册的单词插进当前队列。</p>
                 </div>
+                <button class="button button-dark" type="button" data-action="open-book-import">＋ 导入自己的词书</button>
             </div>
             <div class="book-grid">
                 ${BOOKS.map((book, index) => {
@@ -592,8 +662,9 @@
                             <span class="progress-track"><span style="width:${stats.learnedPercent}%"></span></span>
                             <div class="book-card-actions">
                                 <button class="button button-soft" type="button" data-action="open-book-lists" data-book-id="${escapeHtml(book.id)}">查看分组</button>
-                                <button class="button button-dark" type="button" data-action="study-book" data-study-mode="meaning" data-book-id="${escapeHtml(book.id)}">20 词微循环</button>
-                                <button class="button button-soft" type="button" data-action="study-book" data-study-mode="spelling" data-book-id="${escapeHtml(book.id)}">练拼写</button>
+                                <button class="button button-dark" type="button" data-action="study-book" data-study-kind="new" data-study-mode="meaning" data-book-id="${escapeHtml(book.id)}">学习新词</button>
+                                <button class="button button-soft" type="button" data-action="study-book" data-study-kind="review" data-study-mode="meaning" data-book-id="${escapeHtml(book.id)}">到期复习</button>
+                                <button class="button button-soft" type="button" data-action="study-book" data-study-kind="review" data-study-mode="spelling" data-book-id="${escapeHtml(book.id)}">练拼写</button>
                             </div>
                         </article>
                     `;
@@ -629,8 +700,9 @@
             <div class="lists-toolbar">
                 <div class="search-box"><span>⌕</span><input data-field="list-search" type="search" value="${escapeHtml(ui.listQuery)}" placeholder="搜索 List 或单词"></div>
                 <div class="toolbar-actions">
-                    <button class="button button-dark" type="button" data-action="start-today" data-study-mode="meaning">20 词微循环</button>
-                    <button class="button button-soft" type="button" data-action="start-today" data-study-mode="spelling">拼写检测</button>
+                    <button class="button button-dark" type="button" data-action="start-new" data-study-mode="meaning">学习新词</button>
+                    <button class="button button-soft" type="button" data-action="start-review" data-study-mode="meaning">到期复习</button>
+                    <button class="button button-soft" type="button" data-action="start-review" data-study-mode="spelling">拼写检测</button>
                 </div>
             </div>
             <div class="list-grid">
@@ -652,8 +724,9 @@
                             <div class="list-card-foot">
                                 <small>${stats.learned}/${stats.total} 已学 · ${stats.mastered} 掌握</small>
                                 <div class="list-card-buttons">
-                                    <button type="button" data-action="study-group" data-study-mode="meaning" data-group-id="${escapeHtml(group.id)}">20 词微循环</button>
-                                    <button type="button" data-action="study-group" data-study-mode="spelling" data-group-id="${escapeHtml(group.id)}">练拼写</button>
+                                    <button type="button" data-action="study-group" data-study-kind="new" data-study-mode="meaning" data-group-id="${escapeHtml(group.id)}">学新词</button>
+                                    <button type="button" data-action="study-group" data-study-kind="review" data-study-mode="meaning" data-group-id="${escapeHtml(group.id)}">复习</button>
+                                    <button type="button" data-action="study-group" data-study-kind="review" data-study-mode="spelling" data-group-id="${escapeHtml(group.id)}">拼写</button>
                                 </div>
                             </div>
                         </article>
@@ -683,16 +756,24 @@
         }).format(ui.calendarMonth);
         const cells = calendarCells(ui.calendarMonth);
         const selectedTasks = plan.filter((task) => task.date === ui.calendarSelectedDate);
-        const startDate = state.plans[book.id]?.startDate || localDateKey(new Date());
-        const chunks = Math.ceil(book.groups.length / 2);
+        const planSettings = {
+            ...DEFAULT_PLAN,
+            startDate: localDateKey(new Date()),
+            ...(state.plans[book.id] || {}),
+        };
+        const startDate = planSettings.startDate;
+        const chunks =
+            planSettings.mode === "words"
+                ? Math.ceil(book.wordCount / planSettings.wordsPerDay)
+                : Math.ceil(book.groups.length / planSettings.listsPerDay);
         const endDate = plan.length ? plan[plan.length - 1].date : startDate;
 
         target.innerHTML = `
             <div class="page-heading">
                 <div>
-                    <span class="eyebrow">17-DAY METHOD · CHECK-IN</span>
-                    <h1 id="calendar-title">背词日历</h1>
-                    <p>严格沿用 17 天计划表节奏：每天按原书顺序新学 2 个 List，并在当天、+1、+3、+7、+14、+29 天回顾。当前词书有 ${book.groupCount} 组，预计 ${chunks} 个新学日。</p>
+                    <span class="eyebrow">FORGETTING CURVE · CHECK-IN</span>
+                    <h1 id="calendar-title">专属背词日历</h1>
+                    <p>按原书顺序安排新词，并在当天、+1、+3、+7、+14、+29 天回顾。你可以按每天几个 List 或几个单词制定计划；调整节奏只重排日历，不会清空已经学过的词。预计 ${chunks} 个新学日。</p>
                 </div>
             </div>
             <div class="calendar-layout">
@@ -707,6 +788,24 @@
                             <label>开始日期 <input data-field="plan-start" type="date" value="${escapeHtml(startDate)}"></label>
                             <button class="button button-soft" type="button" data-action="calendar-today">今天</button>
                         </div>
+                    </div>
+                    <div class="plan-builder">
+                        <label>
+                            <span>计划方式</span>
+                            <select data-field="plan-mode">
+                                <option value="lists"${planSettings.mode === "lists" ? " selected" : ""}>每天按 List</option>
+                                <option value="words"${planSettings.mode === "words" ? " selected" : ""}>每天按单词数</option>
+                            </select>
+                        </label>
+                        <label class="${planSettings.mode === "lists" ? "" : "is-hidden"}">
+                            <span>每天新学 List</span>
+                            <input data-field="plan-lists" type="number" min="1" max="20" value="${planSettings.listsPerDay}">
+                        </label>
+                        <label class="${planSettings.mode === "words" ? "" : "is-hidden"}">
+                            <span>每天新学单词</span>
+                            <input data-field="plan-words" type="number" min="1" max="1000" value="${planSettings.wordsPerDay}">
+                        </label>
+                        <small>保存后立即重排计划；已有学习进度和复习记录不变。</small>
                     </div>
                     <div class="calendar-weekdays">
                         ${["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"].map((day) => `<span>${day}</span>`).join("")}
@@ -743,7 +842,7 @@
                         <span class="eyebrow">AGENDA</span>
                         <h2>${escapeHtml(formatLongDate(ui.calendarSelectedDate))}</h2>
                         <p>${selectedTasks.length ? `${selectedTasks.length} 项任务` : "今天没有计划任务"}</p>
-                        <div class="plan-note">当前计划从 ${startDate} 开始，最后一次回顾在 ${endDate}。修改开始日期会重新生成日历，已完成的旧计划打卡仍保留在本地备份中。</div>
+                        <div class="plan-note">当前计划从 ${startDate} 开始，最后一次回顾在 ${endDate}。修改计划不会重置已学习单词；新计划会自动识别已经完成的新词。</div>
                     </div>
                     <div class="agenda-list">
                         ${selectedTasks.length ? selectedTasks.map((task) => `
@@ -825,40 +924,49 @@
         if (!book) {
             return;
         }
-        const mode = options.mode || "today";
+        const mode = options.mode || "new";
         let groupIds = Array.isArray(options.groupIds) ? options.groupIds : [];
-        if (!groupIds.length && mode === "today") {
+        let wordIds = Array.isArray(options.wordIds) ? options.wordIds : [];
+        if (!groupIds.length && !wordIds.length && mode === "new") {
             const learnTask = tasksForDate(book, localDateKey(new Date())).find(
                 (task) => task.type === "learn"
             );
             groupIds = learnTask?.groupIds || firstIncompleteGroups(book);
+            wordIds = learnTask?.wordIds || [];
         }
         const scopedGroups = groupIds
             .map((groupId) => groupIndex.get(`${book.id}:${groupId}`))
             .filter(Boolean);
-        const scopedWords = scopedGroups.length
-            ? scopedGroups.flatMap((group) => group.words)
-            : allWords(book);
+        const explicitWords = wordIds
+            .map((wordId) => wordIndex.get(wordId)?.word)
+            .filter(Boolean);
+        const scopedWords = explicitWords.length
+            ? explicitWords
+            : scopedGroups.length
+              ? scopedGroups.flatMap((group) => group.words)
+              : allWords(book);
         let candidates = [];
 
         const groupSize = clamp(state.settings.dailyNew, 1, BATCH_SIZE);
-        if (mode === "group") {
-            const unseen = scopedWords.filter(
-                (word) => !getProgress(book.id, word.id).lastReviewed
-            );
-            candidates = (unseen.length ? unseen : dueWords(book, scopedWords)).slice(
+        if (mode === "new" || mode === "group-new") {
+            candidates = scopedWords
+                .filter(
+                    (word) => !getProgress(book.id, word.id).lastReviewed
+                )
+                .slice(0, groupSize);
+        } else if (mode === "due-review" || mode === "group-review") {
+            candidates = dueWords(book, scopedWords).slice(
                 0,
-                options.studyMode === "spelling" ? state.settings.reviewLimit : groupSize
+                options.studyMode === "spelling"
+                    ? state.settings.reviewLimit
+                    : groupSize
             );
         } else if (mode === "plan-review") {
             candidates = scopedWords
-                .slice()
+                .filter((word) => getProgress(book.id, word.id).lastReviewed)
                 .sort((a, b) => {
                     const aProgress = getProgress(book.id, a.id);
                     const bProgress = getProgress(book.id, b.id);
-                    if (Boolean(aProgress.lastReviewed) !== Boolean(bProgress.lastReviewed)) {
-                        return aProgress.lastReviewed ? -1 : 1;
-                    }
                     return (aProgress.correctCount || 0) - (bProgress.correctCount || 0);
                 })
                 .slice(
@@ -868,21 +976,17 @@
                         : groupSize
                 );
         } else {
-            const newWords = scopedWords
-                .filter((word) => !getProgress(book.id, word.id).lastReviewed)
-                .slice(0, groupSize);
-            candidates = newWords.length
-                ? newWords
-                : dueWords(book, scopedWords).slice(
-                      0,
-                      options.studyMode === "spelling"
-                          ? state.settings.reviewLimit
-                          : groupSize
-                  );
+            candidates = scopedWords.filter(
+                (word) => !getProgress(book.id, word.id).lastReviewed
+            ).slice(0, groupSize);
         }
 
         if (!candidates.length) {
-            toast("当前没有到期或未学词汇。可从 List 页面选择一组重练。");
+            toast(
+                mode.includes("review")
+                    ? "当前范围没有到期复习词。"
+                    : "当前范围的新词已经学完了。"
+            );
             return;
         }
 
@@ -893,6 +997,7 @@
             sourceTaskKey: options.taskKey || null,
             sourceTaskType: options.taskType || null,
             sourceGroupIds: scopedGroups.map((group) => group.id),
+            sourceWordIds: scopedWords.map((word) => word.id),
             pendingIds:
                 options.studyMode === "spelling" ? candidates.map((word) => word.id) : [],
             roundWordIds: candidates.map((word) => word.id),
@@ -1200,7 +1305,8 @@
             .toLowerCase()
             .replace(/[a-z0-9]/g, "")
             .replace(/[，。；、：！？,.!?;:（）()\[\]【】“”"'·…—\s]/g, "")
-            .replace(/^(意思是|表示|就是|指的是|一种|一个|使人|让人)+/g, "")
+            .replace(/^(意思是|就是|指的是|一种|一个|使人|让人)(?=.)/g, "")
+            .replace(/^表示(?=.{2,})/g, "")
             .replace(/(的意思|的含义)$/g, "")
             .replace(/[的地得]/g, "");
         SEMANTIC_EQUIVALENTS.forEach((group, index) => {
@@ -1246,6 +1352,18 @@
 
     function evaluateMeaningAnswer(input, word) {
         const rawAnswer = chineseMeaning(word.meaning);
+        const plain = (value) =>
+            String(value || "")
+                .normalize("NFKC")
+                .toLowerCase()
+                .replace(/[\s，。；、：！？,.!?;:（）()\[\]【】“”"'·…—]/g, "");
+        const plainInput = plain(input);
+        const plainTargets = [rawAnswer, ...rawAnswer.split(/[，、；;/（）()]/)]
+            .map(plain)
+            .filter(Boolean);
+        if (plainInput && plainTargets.includes(plainInput)) {
+            return { status: "correct", score: 1, expected: rawAnswer };
+        }
         const targets = [
             rawAnswer,
             ...rawAnswer.split(/[，、；;/（）()]/),
@@ -2076,12 +2194,19 @@
         const groupIds = Array.isArray(session?.sourceGroupIds)
             ? session.sourceGroupIds
             : [];
-        if (!book || !groupIds.length) {
+        const sourceWordIds = Array.isArray(session?.sourceWordIds)
+            ? session.sourceWordIds
+            : [];
+        if (!book || (!groupIds.length && !sourceWordIds.length)) {
             return { total: 0, learned: 0, remaining: 0 };
         }
-        const words = groupIds.flatMap(
-            (groupId) => groupIndex.get(`${book.id}:${groupId}`)?.words || []
-        );
+        const words = sourceWordIds.length
+            ? sourceWordIds
+                  .map((wordId) => wordIndex.get(wordId)?.word)
+                  .filter(Boolean)
+            : groupIds.flatMap(
+                  (groupId) => groupIndex.get(`${book.id}:${groupId}`)?.words || []
+              );
         const learned = words.filter(
             (word) => getProgress(book.id, word.id).lastReviewed
         ).length;
@@ -2090,6 +2215,237 @@
             learned,
             remaining: Math.max(0, words.length - learned),
         };
+    }
+
+    function openBookImport() {
+        const modal = document.querySelector('[data-modal="book-import"]');
+        const form = document.getElementById("book-import-form");
+        if (!modal || !form) {
+            return;
+        }
+        form.reset();
+        form.elements.listSize.value = 100;
+        modal.hidden = false;
+        window.setTimeout(() => form.elements.title.focus(), 0);
+    }
+
+    function closeBookImport() {
+        const modal = document.querySelector('[data-modal="book-import"]');
+        if (modal) {
+            modal.hidden = true;
+        }
+    }
+
+    function splitDelimitedLine(line, delimiter) {
+        const cells = [];
+        let value = "";
+        let quoted = false;
+        for (let index = 0; index < line.length; index += 1) {
+            const character = line[index];
+            if (character === '"') {
+                if (quoted && line[index + 1] === '"') {
+                    value += '"';
+                    index += 1;
+                } else {
+                    quoted = !quoted;
+                }
+            } else if (character === delimiter && !quoted) {
+                cells.push(value.trim());
+                value = "";
+            } else {
+                value += character;
+            }
+        }
+        cells.push(value.trim());
+        return cells;
+    }
+
+    function rowsFromText(text, extension) {
+        const lines = String(text || "")
+            .replace(/\r/g, "")
+            .split("\n")
+            .map((line) => line.trim())
+            .filter(Boolean);
+        const rows = [];
+        let currentList = "";
+        lines.forEach((line, lineIndex) => {
+            const heading = line.match(/^(?:list|day|第)\s*([0-9一二三四五六七八九十百]+)\s*(?:组|天)?$/i);
+            if (heading) {
+                currentList = `List ${heading[1]}`;
+                return;
+            }
+            let cells;
+            if (extension === "csv" || (line.includes(",") && !line.includes("\t"))) {
+                cells = splitDelimitedLine(line, ",");
+            } else if (line.includes("\t")) {
+                cells = splitDelimitedLine(line, "\t");
+            } else {
+                const matched = line.match(
+                    /^([A-Za-z][A-Za-z'’.-]*(?:\s+[A-Za-z][A-Za-z'’.-]*)?)\s*(?:[-—:：]\s*|\s+)(.+)$/
+                );
+                if (!matched) {
+                    return;
+                }
+                cells = [matched[1], matched[2]];
+            }
+            const first = String(cells[0] || "").trim();
+            if (
+                lineIndex === 0 &&
+                /^(word|单词|英文)$/i.test(first)
+            ) {
+                return;
+            }
+            const word = first.match(/[A-Za-z][A-Za-z'’.-]*(?:\s+[A-Za-z][A-Za-z'’.-]*)?/)?.[0];
+            const meaning = String(cells[1] || "").trim();
+            if (!word || !meaning) {
+                return;
+            }
+            rows.push({
+                word,
+                meaning,
+                phonetic: String(cells[2] || "").trim(),
+                example: String(cells[3] || "").trim(),
+                list: String(cells[4] || currentList).trim(),
+            });
+        });
+        return rows;
+    }
+
+    async function textFromPdf(file) {
+        const pdfjs = await import(
+            new URL("assets/vendor/pdf.min.mjs", document.baseURI).href
+        );
+        pdfjs.GlobalWorkerOptions.workerSrc = new URL(
+            "assets/vendor/pdf.worker.min.mjs",
+            document.baseURI
+        ).href;
+        const pdf = await pdfjs.getDocument({ data: await file.arrayBuffer() }).promise;
+        const lines = [];
+        for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+            const page = await pdf.getPage(pageNumber);
+            const content = await page.getTextContent();
+            const rows = new Map();
+            content.items.forEach((item) => {
+                const y = Math.round((item.transform?.[5] || 0) / 3) * 3;
+                if (!rows.has(y)) {
+                    rows.set(y, []);
+                }
+                rows.get(y).push({
+                    x: item.transform?.[4] || 0,
+                    text: String(item.str || "").trim(),
+                });
+            });
+            [...rows.entries()]
+                .sort((a, b) => b[0] - a[0])
+                .forEach(([, items]) => {
+                    const line = items
+                        .sort((a, b) => a.x - b.x)
+                        .map((item) => item.text)
+                        .filter(Boolean)
+                        .join(" ");
+                    if (line) {
+                        lines.push(line);
+                    }
+                });
+        }
+        return lines.join("\n");
+    }
+
+    function normalizeImportedGroups(input, listSize, bookId) {
+        const sourceGroups = Array.isArray(input?.groups) ? input.groups : null;
+        let rows = Array.isArray(input) ? input : Array.isArray(input?.words) ? input.words : [];
+        if (sourceGroups) {
+            rows = sourceGroups.flatMap((group, groupIndexValue) =>
+                (group.words || []).map((word) => ({
+                    ...word,
+                    list: group.label || `List ${groupIndexValue + 1}`,
+                }))
+            );
+        }
+        const buckets = [];
+        const bucketMap = new Map();
+        rows.forEach((entry, index) => {
+            const word = String(entry?.word || entry?.english || "").trim();
+            const meaning = String(
+                entry?.meaning || entry?.chinese || entry?.translation || ""
+            ).trim();
+            if (!word || !meaning) {
+                return;
+            }
+            const explicitLabel = String(entry?.list || entry?.group || "").trim();
+            const fallbackNumber = Math.floor(index / listSize) + 1;
+            const label = explicitLabel || `List ${fallbackNumber}`;
+            if (!bucketMap.has(label)) {
+                const group = {
+                    id: `list-${buckets.length + 1}`,
+                    label,
+                    order: buckets.length + 1,
+                    words: [],
+                };
+                bucketMap.set(label, group);
+                buckets.push(group);
+            }
+            const group = bucketMap.get(label);
+            group.words.push({
+                id: `${bookId}-${group.id}-${group.words.length + 1}`,
+                groupId: group.id,
+                word,
+                meaning,
+                phonetic: String(entry?.phonetic || entry?.pronunciation || "").trim(),
+                example: String(entry?.example || "").trim(),
+                sourceText: meaning,
+            });
+        });
+        return buckets.filter((group) => group.words.length);
+    }
+
+    async function importCustomBook(form) {
+        const data = new FormData(form);
+        const file = form.elements.bookFile.files?.[0];
+        const title = String(data.get("title") || file?.name?.replace(/\.[^.]+$/, "") || "").trim();
+        const listSize = clamp(data.get("listSize"), 1, 1000);
+        if (!file || !title) {
+            throw new Error("请填写词书名称并选择文件");
+        }
+        const extension = file.name.split(".").pop()?.toLowerCase() || "";
+        let source;
+        if (extension === "json") {
+            source = JSON.parse(await file.text());
+        } else {
+            const text = extension === "pdf" ? await textFromPdf(file) : await file.text();
+            source = rowsFromText(text, extension);
+        }
+        const bookId = `custom-${Date.now().toString(36)}`;
+        const groups = normalizeImportedGroups(source, listSize, bookId);
+        const wordCount = groups.reduce((sum, group) => sum + group.words.length, 0);
+        if (!wordCount) {
+            throw new Error("没有识别到“英文单词 + 中文释义”，请检查文件格式");
+        }
+        const accents = ["#27675a", "#d97845", "#6f63a8", "#2875a7", "#a64f64"];
+        const book = {
+            id: bookId,
+            title,
+            subtitle: `自定义导入 · ${localDateKey(new Date())}`,
+            accent: accents[BOOKS.length % accents.length],
+            source: file.name,
+            isCustom: true,
+            groups,
+            groupCount: groups.length,
+            wordCount,
+        };
+        const customBooks = [...BOOKS.filter((item) => item.isCustom), book];
+        window.localStorage.setItem(CUSTOM_BOOKS_KEY, JSON.stringify(customBooks));
+        BOOKS.push(book);
+        indexBook(book);
+        state.plans[book.id] = {
+            ...DEFAULT_PLAN,
+            startDate: localDateKey(new Date()),
+        };
+        state.selectedBookId = book.id;
+        saveState();
+        closeBookImport();
+        navigate("books");
+        toast(`已导入《${title}》：${groups.length} 个 List，${wordCount} 词。`);
     }
 
     function openSettings() {
@@ -2118,6 +2474,7 @@
             version: BACKUP_VERSION,
             exportedAt: new Date().toISOString(),
             state,
+            customBooks: BOOKS.filter((book) => book.isCustom),
         };
         const blob = new Blob([JSON.stringify(payload, null, 2)], {
             type: "application/json",
@@ -2138,11 +2495,36 @@
                 throw new Error("不是 GRE List Lab 进度文件");
             }
             const imported = payload.state;
+            if (Array.isArray(payload.customBooks)) {
+                const existingIds = new Set(BOOKS.map((book) => book.id));
+                payload.customBooks.forEach((book) => {
+                    if (!existingIds.has(book.id) && Array.isArray(book.groups)) {
+                        book.isCustom = true;
+                        BOOKS.push(book);
+                        indexBook(book);
+                        existingIds.add(book.id);
+                    }
+                });
+                window.localStorage.setItem(
+                    CUSTOM_BOOKS_KEY,
+                    JSON.stringify(BOOKS.filter((book) => book.isCustom))
+                );
+            }
             state = {
                 ...defaultState(),
                 ...imported,
                 route: "dashboard",
                 settings: { ...DEFAULT_SETTINGS, ...(imported.settings || {}) },
+                plans: Object.fromEntries(
+                    BOOKS.map((book) => [
+                        book.id,
+                        {
+                            ...DEFAULT_PLAN,
+                            startDate: localDateKey(new Date()),
+                            ...(imported.plans?.[book.id] || {}),
+                        },
+                    ])
+                ),
             };
             saveState();
             closeSettings();
@@ -2183,6 +2565,10 @@
             openSettings();
         } else if (action === "close-settings") {
             closeSettings();
+        } else if (action === "open-book-import") {
+            openBookImport();
+        } else if (action === "close-book-import") {
+            closeBookImport();
         } else if (action === "select-book") {
             selectBook(trigger.dataset.bookId, "dashboard");
         } else if (action === "open-book-lists") {
@@ -2190,18 +2576,29 @@
         } else if (action === "study-book") {
             selectBook(trigger.dataset.bookId);
             startStudy({
-                mode: "today",
+                mode:
+                    trigger.dataset.studyKind === "review"
+                        ? "due-review"
+                        : "new",
                 studyMode: trigger.dataset.studyMode || "meaning",
             });
         } else if (action === "study-group") {
             startStudy({
-                mode: "group",
+                mode:
+                    trigger.dataset.studyKind === "review"
+                        ? "group-review"
+                        : "group-new",
                 groupIds: [trigger.dataset.groupId],
                 studyMode: trigger.dataset.studyMode || "meaning",
             });
-        } else if (action === "start-today") {
+        } else if (action === "start-new") {
             startStudy({
-                mode: "today",
+                mode: "new",
+                studyMode: trigger.dataset.studyMode || "meaning",
+            });
+        } else if (action === "start-review") {
+            startStudy({
+                mode: "due-review",
                 studyMode: trigger.dataset.studyMode || "meaning",
             });
         } else if (action === "resume-study") {
@@ -2241,8 +2638,9 @@
             const task = planTaskMap.get(trigger.dataset.taskKey);
             if (task) {
                 startStudy({
-                    mode: task.type === "review" ? "plan-review" : "group",
+                    mode: task.type === "review" ? "plan-review" : "group-new",
                     groupIds: task.groupIds,
+                    wordIds: task.wordIds,
                     taskKey: task.key,
                     taskType: task.type,
                     studyMode: "meaning",
@@ -2320,11 +2718,51 @@
         } else if (event.target.matches('[data-field="plan-start"]')) {
             const book = currentBook();
             if (book && event.target.value) {
-                state.plans[book.id] = { startDate: event.target.value };
+                state.plans[book.id] = {
+                    ...DEFAULT_PLAN,
+                    ...(state.plans[book.id] || {}),
+                    startDate: event.target.value,
+                };
                 ui.calendarSelectedDate = event.target.value;
                 ui.calendarMonth = firstOfMonth(parseLocalDate(event.target.value));
                 saveState();
                 renderCalendar();
+            }
+        } else if (event.target.matches('[data-field="plan-mode"]')) {
+            const book = currentBook();
+            if (book) {
+                state.plans[book.id] = {
+                    ...DEFAULT_PLAN,
+                    ...(state.plans[book.id] || {}),
+                    mode: event.target.value === "words" ? "words" : "lists",
+                };
+                saveState();
+                renderCalendar();
+                toast("计划已重排，学习进度保持不变。");
+            }
+        } else if (event.target.matches('[data-field="plan-lists"]')) {
+            const book = currentBook();
+            if (book) {
+                state.plans[book.id] = {
+                    ...DEFAULT_PLAN,
+                    ...(state.plans[book.id] || {}),
+                    listsPerDay: clamp(event.target.value, 1, 20),
+                };
+                saveState();
+                renderCalendar();
+                toast("每日 List 数已更新，学习进度保持不变。");
+            }
+        } else if (event.target.matches('[data-field="plan-words"]')) {
+            const book = currentBook();
+            if (book) {
+                state.plans[book.id] = {
+                    ...DEFAULT_PLAN,
+                    ...(state.plans[book.id] || {}),
+                    wordsPerDay: clamp(event.target.value, 1, 1000),
+                };
+                saveState();
+                renderCalendar();
+                toast("每日单词数已更新，学习进度保持不变。");
             }
         } else if (event.target.matches('[data-field="progress-file"]')) {
             const file = event.target.files?.[0];
@@ -2349,11 +2787,36 @@
         toast("学习设置已保存。");
     });
 
+    document.getElementById("book-import-form")?.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const button = event.currentTarget.querySelector('[type="submit"]');
+        if (button) {
+            button.disabled = true;
+            button.textContent = "正在识别…";
+        }
+        try {
+            await importCustomBook(event.currentTarget);
+        } catch (error) {
+            toast(`导入失败：${error.message || error}`);
+        } finally {
+            if (button) {
+                button.disabled = false;
+                button.textContent = "导入并生成计划";
+            }
+        }
+    });
+
     document.addEventListener("keydown", (event) => {
-        const modalOpen = !document.querySelector('[data-modal="settings"]')?.hidden;
-        if (modalOpen) {
+        const settingsOpen = !document.querySelector('[data-modal="settings"]')?.hidden;
+        const bookImportOpen = !document.querySelector('[data-modal="book-import"]')?.hidden;
+        if (settingsOpen || bookImportOpen) {
             if (event.key === "Escape") {
-                closeSettings();
+                if (settingsOpen) {
+                    closeSettings();
+                }
+                if (bookImportOpen) {
+                    closeBookImport();
+                }
             }
             return;
         }

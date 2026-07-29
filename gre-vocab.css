@@ -965,6 +965,45 @@ button {
     background: #fff;
 }
 
+.plan-builder {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: end;
+    gap: 12px;
+    padding: 15px 22px;
+    border-bottom: 1px solid var(--line);
+    background: #f7f7f2;
+}
+
+.plan-builder label {
+    display: grid;
+    gap: 5px;
+    min-width: 150px;
+    color: var(--muted);
+    font-size: 11px;
+}
+
+.plan-builder input,
+.plan-builder select {
+    min-height: 42px;
+    padding: 0 11px;
+    border: 1px solid var(--line);
+    border-radius: 11px;
+    color: var(--ink);
+    background: #fff;
+}
+
+.plan-builder small {
+    flex: 1 1 220px;
+    padding-bottom: 10px;
+    color: var(--muted);
+    line-height: 1.5;
+}
+
+.plan-builder .is-hidden {
+    display: none;
+}
+
 .calendar-month {
     min-width: 145px;
     text-align: center;
@@ -1830,29 +1869,34 @@ button {
     font-weight: 500;
 }
 
-#settings-form {
+#settings-form,
+#book-import-form {
     display: grid;
     gap: 15px;
     margin-top: 24px;
 }
 
-#settings-form label {
+#settings-form label,
+#book-import-form label {
     display: grid;
     grid-template-columns: minmax(0, 1fr) 105px;
     gap: 3px 14px;
     align-items: center;
 }
 
-#settings-form label > span {
+#settings-form label > span,
+#book-import-form label > span {
     font-weight: 750;
 }
 
-#settings-form label > small {
+#settings-form label > small,
+#book-import-form label > small {
     color: var(--muted);
     font-size: 11px;
 }
 
-#settings-form input {
+#settings-form input,
+#book-import-form input {
     grid-area: 1 / 2 / 3 / 3;
     width: 100%;
     min-height: 45px;
@@ -1860,6 +1904,15 @@ button {
     border: 1px solid var(--line);
     border-radius: 12px;
     background: #fff;
+}
+
+.import-tip {
+    padding: 13px 14px;
+    border-radius: 13px;
+    color: var(--muted);
+    background: #eff1eb;
+    font-size: 11px;
+    line-height: 1.6;
 }
 
 .modal-actions {
@@ -2117,11 +2170,13 @@ button {
         grid-template-columns: 1fr;
     }
 
-    #settings-form label {
+    #settings-form label,
+    #book-import-form label {
         grid-template-columns: 1fr;
     }
 
-    #settings-form input {
+    #settings-form input,
+    #book-import-form input {
         grid-area: auto;
     }
 }
