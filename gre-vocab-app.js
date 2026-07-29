@@ -717,14 +717,28 @@
                     return `
                         <article class="list-card" style="--book-accent:${book.accent}">
                             <div class="list-card-head">
-                                <h3>${escapeHtml(group.label)}</h3>
+                                <div>
+                                    <h3>${escapeHtml(group.label)}</h3>
+                                    <small>${stats.total} 个单词</small>
+                                </div>
                                 <span class="status-pill ${status[1]}">${status[0]}</span>
                             </div>
-                            <span class="progress-track"><span style="width:${stats.percent}%"></span></span>
+                            <div
+                                class="list-card-progress"
+                                role="progressbar"
+                                aria-label="${escapeHtml(group.label)}学习进度"
+                                aria-valuemin="0"
+                                aria-valuemax="100"
+                                aria-valuenow="${stats.percent}"
+                            ><span style="width:${stats.percent}%"></span></div>
                             <div class="list-card-foot">
-                                <small>${stats.learned}/${stats.total} 已学 · ${stats.mastered} 掌握</small>
+                                <div class="list-card-stats">
+                                    <span><strong>${stats.learned}</strong><small>已学习</small></span>
+                                    <span><strong>${stats.total - stats.learned}</strong><small>未学习</small></span>
+                                    <span><strong>${stats.mastered}</strong><small>已掌握</small></span>
+                                </div>
                                 <div class="list-card-buttons">
-                                    <button type="button" data-action="study-group" data-study-kind="new" data-study-mode="meaning" data-group-id="${escapeHtml(group.id)}">学新词</button>
+                                    <button class="is-primary" type="button" data-action="study-group" data-study-kind="new" data-study-mode="meaning" data-group-id="${escapeHtml(group.id)}">学新词</button>
                                     <button type="button" data-action="study-group" data-study-kind="review" data-study-mode="meaning" data-group-id="${escapeHtml(group.id)}">复习</button>
                                     <button type="button" data-action="study-group" data-study-kind="review" data-study-mode="spelling" data-group-id="${escapeHtml(group.id)}">拼写</button>
                                 </div>
@@ -2312,13 +2326,28 @@
     }
 
     async function textFromPdf(file) {
-        const pdfjs = await import(
-            new URL("assets/vendor/pdf.min.mjs", document.baseURI).href
-        );
-        pdfjs.GlobalWorkerOptions.workerSrc = new URL(
+        const localModuleUrl = new URL(
+            "assets/vendor/pdf.min.mjs",
+            document.baseURI
+        ).href;
+        const localWorkerUrl = new URL(
             "assets/vendor/pdf.worker.min.mjs",
             document.baseURI
         ).href;
+        const cdnModuleUrl =
+            "https://cdn.jsdelivr.net/npm/pdfjs-dist@5.6.205/build/pdf.min.mjs";
+        const cdnWorkerUrl =
+            "https://cdn.jsdelivr.net/npm/pdfjs-dist@5.6.205/build/pdf.worker.min.mjs";
+        let pdfjs;
+        let workerUrl = localWorkerUrl;
+        try {
+            pdfjs = await import(localModuleUrl);
+        } catch (localError) {
+            console.info("[GRE List Lab] 使用在线 PDF 解析组件", localError);
+            pdfjs = await import(cdnModuleUrl);
+            workerUrl = cdnWorkerUrl;
+        }
+        pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
         const pdf = await pdfjs.getDocument({ data: await file.arrayBuffer() }).promise;
         const lines = [];
         for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {

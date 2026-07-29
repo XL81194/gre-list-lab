@@ -856,18 +856,22 @@ button {
 .list-grid {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 14px;
+    gap: 16px;
 }
 
 .list-card {
-    padding: 20px;
-    border-radius: 20px;
+    display: flex;
+    min-width: 0;
+    min-height: 222px;
+    overflow: hidden;
+    flex-direction: column;
+    padding: 22px;
+    border-radius: 22px;
 }
 
-.list-card-head,
-.list-card-foot {
+.list-card-head {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     justify-content: space-between;
     gap: 14px;
 }
@@ -875,11 +879,19 @@ button {
 .list-card h3 {
     margin: 0;
     font-family: Georgia, "Noto Serif SC", serif;
-    font-size: 21px;
+    font-size: 25px;
     font-weight: 500;
 }
 
+.list-card-head small {
+    display: block;
+    margin-top: 4px;
+    color: var(--muted);
+    font-size: 11px;
+}
+
 .status-pill {
+    flex: 0 0 auto;
     padding: 5px 9px;
     border-radius: 99px;
     color: var(--muted);
@@ -898,26 +910,101 @@ button {
     background: var(--green-soft);
 }
 
-.list-card .progress-track {
-    margin: 19px 0 15px;
-    color: var(--book-accent);
+.list-card-progress {
+    display: block;
+    width: 100%;
+    height: 6px;
+    min-height: 6px;
+    max-height: 6px;
+    overflow: hidden;
+    flex: 0 0 6px;
+    margin: 20px 0 18px;
+    border-radius: 99px;
+    background: #e8e9e3;
 }
 
-.list-card-foot small {
+.list-card-progress > span {
+    display: block;
+    width: 0;
+    height: 6px;
+    max-width: 100%;
+    border-radius: inherit;
+    background: var(--book-accent);
+}
+
+.list-card-foot {
+    display: grid;
+    gap: 18px;
+    margin-top: auto;
+}
+
+.list-card-stats {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.list-card-stats > span {
+    min-width: 0;
+    padding-right: 8px;
+    border-right: 1px solid var(--line);
+}
+
+.list-card-stats > span:last-child {
+    padding-right: 0;
+    border-right: 0;
+}
+
+.list-card-stats strong,
+.list-card-stats small {
+    display: block;
+}
+
+.list-card-stats strong {
+    color: var(--ink);
+    font-size: 15px;
+}
+
+.list-card-stats small {
+    margin-top: 2px;
+    overflow: hidden;
     color: var(--muted);
+    font-size: 10px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.list-card-buttons {
+    display: grid;
+    grid-template-columns: 1.25fr 1fr 1fr;
+    gap: 8px;
 }
 
 .list-card-buttons button {
-    padding: 7px 11px;
-    border: 0;
-    border-radius: 10px;
+    min-width: 0;
+    min-height: 38px;
+    padding: 7px 8px;
+    border: 1px solid rgba(39, 103, 90, 0.1);
+    border-radius: 11px;
     color: var(--green);
     background: var(--green-soft);
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 750;
 }
 
+.list-card-buttons button:hover {
+    transform: translateY(-1px);
+    filter: brightness(0.98);
+}
+
+.list-card-buttons button.is-primary {
+    border-color: var(--green);
+    color: #fff;
+    background: var(--green);
+}
+
 .list-card-buttons button:last-child {
+    border-color: rgba(115, 87, 28, 0.08);
     color: #73571c;
     background: #fff1c6;
 }
@@ -2080,6 +2167,30 @@ button {
     .book-grid,
     .list-grid {
         grid-template-columns: 1fr;
+    }
+
+    .lists-toolbar {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .lists-toolbar .search-box {
+        width: 100%;
+    }
+
+    .lists-toolbar .toolbar-actions {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .lists-toolbar .toolbar-actions .button {
+        min-width: 0;
+        padding-inline: 8px;
+        font-size: 11px;
+    }
+
+    .list-card {
+        min-height: 210px;
     }
 
     .book-card:last-child {
