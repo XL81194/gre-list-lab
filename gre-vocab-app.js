@@ -886,7 +886,7 @@
                 <div class="hero-copy">
                     <span class="eyebrow">TODAY · ${escapeHtml(formatLongDate(new Date()))}</span>
                     <h1>今天，把一组难词<br>变成你的词。</h1>
-                    <p>${escapeHtml(book.title)}已按原书顺序分组。学新词与到期复习分开进入；每组最多 20 词，模糊或不认识的词会在组内自动多次复现。</p>
+                    <p>${escapeHtml(book.title)}已按原书顺序分组。学新词、到期复习和自主复习分开进入；每组最多 20 词，模糊或不认识的词会在组内自动多次复现。</p>
                     <div class="hero-actions">
                         ${
                             savedSession
@@ -899,6 +899,7 @@
                         <button class="button button-outline-light" type="button" data-action="start-review" data-study-mode="meaning">
                             到期复习 · ${stats.due}
                         </button>
+                        <button class="button button-outline-light" type="button" data-action="open-voluntary-review">自主复习</button>
                         <button class="button button-outline-light" type="button" data-action="start-review" data-study-mode="spelling">拼写检测</button>
                         <button class="button button-outline-light" type="button" data-route="calendar">查看计划日历</button>
                     </div>
@@ -1005,7 +1006,7 @@
                                 <button class="button button-soft" type="button" data-action="open-book-lists" data-book-id="${escapeHtml(book.id)}">查看分组</button>
                                 ${isEquivalentBook(book)
                                     ? `<button class="button button-dark" type="button" data-action="start-equivalence-book" data-book-id="${escapeHtml(book.id)}">进入五遍训练</button><button class="button button-soft" type="button" data-action="start-equivalence-review-book" data-book-id="${escapeHtml(book.id)}">弱项复习</button>`
-                                    : `<button class="button button-dark" type="button" data-action="study-book" data-study-kind="new" data-study-mode="meaning" data-book-id="${escapeHtml(book.id)}">学习新词</button><button class="button button-soft" type="button" data-action="study-book" data-study-kind="review" data-study-mode="meaning" data-book-id="${escapeHtml(book.id)}">到期复习</button><button class="button button-soft" type="button" data-action="study-book" data-study-kind="review" data-study-mode="spelling" data-book-id="${escapeHtml(book.id)}">练拼写</button>`}
+                                    : `<button class="button button-dark" type="button" data-action="study-book" data-study-kind="new" data-study-mode="meaning" data-book-id="${escapeHtml(book.id)}">学习新词</button><button class="button button-soft" type="button" data-action="study-book" data-study-kind="review" data-study-mode="meaning" data-book-id="${escapeHtml(book.id)}">到期复习</button><button class="button button-soft" type="button" data-action="open-voluntary-review-book" data-book-id="${escapeHtml(book.id)}">自主复习</button><button class="button button-soft" type="button" data-action="study-book" data-study-kind="review" data-study-mode="spelling" data-book-id="${escapeHtml(book.id)}">练拼写</button>`}
                             </div>
                         </article>
                     `;
@@ -1047,6 +1048,7 @@
                 <div class="toolbar-actions">
                     <button class="button button-dark" type="button" data-action="start-new" data-study-mode="meaning">学习新词</button>
                     <button class="button button-soft" type="button" data-action="start-review" data-study-mode="meaning">到期复习</button>
+                    <button class="button button-soft" type="button" data-action="open-voluntary-review">自主复习</button>
                     <button class="button button-soft" type="button" data-action="start-review" data-study-mode="spelling">拼写检测</button>
                 </div>
             </div>
@@ -1084,7 +1086,7 @@
                                 </div>
                                 <div class="list-card-buttons">
                                     <button class="is-primary" type="button" data-action="study-group" data-study-kind="new" data-study-mode="meaning" data-group-id="${escapeHtml(group.id)}">学新词</button>
-                                    <button type="button" data-action="study-group" data-study-kind="review" data-study-mode="meaning" data-group-id="${escapeHtml(group.id)}">复习</button>
+                                    <button type="button" data-action="open-voluntary-review" data-group-id="${escapeHtml(group.id)}" ${stats.learned ? "" : "disabled"} title="${stats.learned ? "随时复习本组已经学过的词" : "本组还没有已学词"}">自主复习</button>
                                     <button type="button" data-action="study-group" data-study-kind="review" data-study-mode="spelling" data-group-id="${escapeHtml(group.id)}">拼写</button>
                                 </div>
                             </div>
@@ -1264,6 +1266,45 @@
             });
     }
 
+    function voluntaryReviewWords(book, scopeWords, strategy = "balanced") {
+        const learned = (scopeWords || allWords(book)).filter(
+            (word) => getProgress(book.id, word.id).lastReviewed
+        );
+        if (strategy === "random") {
+            return shuffle(learned);
+        }
+        return learned.sort((a, b) => {
+            const aProgress = getProgress(book.id, a.id);
+            const bProgress = getProgress(book.id, b.id);
+            if (strategy === "weak") {
+                const weakness = (progress) => {
+                    const ease = Number(progress.easeFactor || 1.3);
+                    return (
+                        (progress.repetitions === 0 ? 1000 : 0) +
+                        Math.max(0, state.settings.masteryCount - Number(progress.correctCount || 0)) * 100 +
+                        Math.round((3 - ease) * 20)
+                    );
+                };
+                const scoreDifference = weakness(bProgress) - weakness(aProgress);
+                if (scoreDifference) {
+                    return scoreDifference;
+                }
+            }
+            const aCount = Number(aProgress.voluntaryReviewCount || 0);
+            const bCount = Number(bProgress.voluntaryReviewCount || 0);
+            if (aCount !== bCount) {
+                return aCount - bCount;
+            }
+            const aTime = aProgress.voluntaryReviewLast
+                ? new Date(aProgress.voluntaryReviewLast).getTime()
+                : 0;
+            const bTime = bProgress.voluntaryReviewLast
+                ? new Date(bProgress.voluntaryReviewLast).getTime()
+                : 0;
+            return aTime - bTime;
+        });
+    }
+
     function firstIncompleteGroups(book, count = 2) {
         return book.groups
             .filter((group) => getGroupStats(book, group).learned < group.words.length)
@@ -1280,6 +1321,15 @@
             seen.add(word.id);
             return true;
         });
+    }
+
+    function shuffle(items) {
+        const copy = [...items];
+        for (let index = copy.length - 1; index > 0; index -= 1) {
+            const swapIndex = Math.floor(Math.random() * (index + 1));
+            [copy[index], copy[swapIndex]] = [copy[swapIndex], copy[index]];
+        }
+        return copy;
     }
 
     const EQUIVALENCE_CONTEXT_BANK = {
@@ -1749,6 +1799,12 @@
                         ? state.settings.reviewLimit
                         : groupSize
                 );
+        } else if (mode === "voluntary-review") {
+            candidates = voluntaryReviewWords(
+                book,
+                scopedWords,
+                options.reviewStrategy || "balanced"
+            ).slice(0, clamp(options.reviewCount || groupSize, 1, 100));
         } else {
             candidates = scopedWords.filter(
                 (word) => !getProgress(book.id, word.id).lastReviewed
@@ -1757,8 +1813,10 @@
 
         if (!candidates.length) {
             toast(
-                mode.includes("review")
-                    ? "当前范围没有到期复习词。"
+                mode === "voluntary-review"
+                    ? "当前范围还没有学过的词，先学一些新词再来复习。"
+                    : mode.includes("review")
+                      ? "当前范围没有到期复习词。"
                     : "当前范围的新词已经学完了。"
             );
             return;
@@ -1766,8 +1824,16 @@
 
         session = {
             bookId: book.id,
-            title: scopedGroups.length ? groupRangeLabel(scopedGroups) : "今日综合任务",
+            title:
+                mode === "voluntary-review"
+                    ? scopedGroups.length
+                        ? `${groupRangeLabel(scopedGroups)} · 自主复习`
+                        : "全书自主复习"
+                    : scopedGroups.length
+                      ? groupRangeLabel(scopedGroups)
+                      : "今日综合任务",
             studyMode: options.studyMode === "spelling" ? "spelling" : "meaning",
+            isVoluntaryReview: mode === "voluntary-review",
             sourceTaskKey: options.taskKey || null,
             sourceTaskType: options.taskType || null,
             sourceGroupIds: scopedGroups.map((group) => group.id),
@@ -2208,7 +2274,7 @@
                         <button class="save-exit-button" type="button" data-action="save-and-leave-study" aria-label="保存进度并退出">← 保存并退出</button>
                         <div>
                             <h1 id="study-title">${escapeHtml(session.title)}</h1>
-                            <p>${escapeHtml(book?.title || "")} · ${session.studyMode === "spelling" ? "进阶拼写检测" : session.studyMode === "equivalence" ? session.isWeakReview ? "25 组微循环 · 到期弱项复习" : `25 组微循环 · 第 ${session.equivalencePass} 遍 ${EQUIVALENCE_PASS_NAMES[session.equivalencePass]}` : `20 词微循环 · ${session.meaningRound === 1 ? "认识判断" : session.meaningRound === 2 ? "英译汉选义" : "中文释义填空"}`}</p>
+                            <p>${escapeHtml(book?.title || "")} · ${session.isVoluntaryReview ? session.studyMode === "spelling" ? "自主复习 · 拼写检测（不改原计划）" : "自主复习 · 快速刷词义（不改原计划）" : session.studyMode === "spelling" ? "进阶拼写检测" : session.studyMode === "equivalence" ? session.isWeakReview ? "25 组微循环 · 到期弱项复习" : `25 组微循环 · 第 ${session.equivalencePass} 遍 ${EQUIVALENCE_PASS_NAMES[session.equivalencePass]}` : `20 词微循环 · ${session.meaningRound === 1 ? "认识判断" : session.meaningRound === 2 ? "英译汉选义" : "中文释义填空"}`}</p>
                         </div>
                     </div>
                     <div class="study-progress">
@@ -2490,7 +2556,11 @@
             const detail = word.example || word.sourceText || word.meaning;
             const icon = result.status === "correct" ? "✓" : result.status === "near" ? "↻" : "!";
             const primaryMeaning = chineseMeaning(word.meaning);
-            const scheduleText = result.roundOnly
+            const scheduleText = session.isVoluntaryReview && result.saved
+                ? progress.nextReview
+                    ? `自主练习已记录；原计划仍为 ${formatShortDate(progress.nextReview)}`
+                    : "自主练习已记录；不会新增或改变到期日期"
+                : result.roundOnly
                 ? result.reinforcementScheduled
                     ? "已自动加入本组后续加固，稍后会再次出现"
                     : "已记录到本组记忆轨迹"
@@ -2970,6 +3040,17 @@
             (resultMode === "spelling" && (session.attempts > 0 || skipped));
 
         if (saved) {
+            if (session.isVoluntaryReview) {
+                nextProgress = {
+                    ...base,
+                    voluntaryReviewCount: Number(base.voluntaryReviewCount || 0) + 1,
+                    voluntaryReviewCorrect:
+                        Number(base.voluntaryReviewCorrect || 0) +
+                        (quality === "wrong" ? 0 : 1),
+                    voluntaryReviewLast: now.toISOString(),
+                    voluntaryReviewLastQuality: quality,
+                };
+            }
             setProgress(book.id, word.id, nextProgress);
             session.completedWordIds = Array.isArray(session.completedWordIds)
                 ? session.completedWordIds
@@ -3337,6 +3418,75 @@
         }
     }
 
+    function voluntaryReviewScopeWords(book, groupId) {
+        if (!book) {
+            return [];
+        }
+        const group = groupId
+            ? groupIndex.get(`${book.id}:${groupId}`)
+            : null;
+        return (group ? group.words : allWords(book)).filter(
+            (word) => getProgress(book.id, word.id).lastReviewed
+        );
+    }
+
+    function updateVoluntaryReviewPreview() {
+        const form = document.getElementById("voluntary-review-form");
+        const preview = document.querySelector("[data-review-preview]");
+        const book = currentBook();
+        if (!form || !preview || !book) {
+            return;
+        }
+        const available = voluntaryReviewScopeWords(book, form.elements.scope.value).length;
+        const requested = clamp(form.elements.reviewCount.value || 20, 1, 100);
+        preview.textContent = available
+            ? `当前范围有 ${available} 个已学词，本次将抽取 ${Math.min(available, requested)} 个。自主复习不会改变原计划中的到期日期。`
+            : "当前范围还没有已学词。自主复习只从已经学习过的内容中抽取。";
+    }
+
+    function openVoluntaryReview(groupId = "") {
+        const modal = document.querySelector('[data-modal="voluntary-review"]');
+        const form = document.getElementById("voluntary-review-form");
+        const book = currentBook();
+        if (!modal || !form || !book) {
+            return;
+        }
+        if (isEquivalentBook(book)) {
+            toast("等价词书请使用五遍训练中的弱项复习。");
+            return;
+        }
+        const totalLearned = voluntaryReviewScopeWords(book, "").length;
+        const groupOptions = book.groups
+            .map((group) => ({
+                group,
+                learned: voluntaryReviewScopeWords(book, group.id).length,
+            }))
+            .filter((item) => item.learned > 0);
+        form.elements.scope.innerHTML = [
+            `<option value="">整本词书 · ${totalLearned} 个已学词</option>`,
+            ...groupOptions.map(
+                ({ group, learned }) =>
+                    `<option value="${escapeHtml(group.id)}">${escapeHtml(group.label)} · ${learned} 个已学词</option>`
+            ),
+        ].join("");
+        form.elements.scope.value = groupOptions.some((item) => item.group.id === groupId)
+            ? groupId
+            : "";
+        form.elements.strategy.value = "balanced";
+        form.elements.reviewCount.value = Math.min(20, Math.max(1, totalLearned || 20));
+        form.elements.studyMode.value = "meaning";
+        updateVoluntaryReviewPreview();
+        modal.hidden = false;
+        window.setTimeout(() => form.elements.scope.focus(), 0);
+    }
+
+    function closeVoluntaryReview() {
+        const modal = document.querySelector('[data-modal="voluntary-review"]');
+        if (modal) {
+            modal.hidden = true;
+        }
+    }
+
     function exportProgress() {
         const payload = {
             app: "GRE List Lab",
@@ -3438,6 +3588,10 @@
             openBookImport();
         } else if (action === "close-book-import") {
             closeBookImport();
+        } else if (action === "open-voluntary-review") {
+            openVoluntaryReview(trigger.dataset.groupId || "");
+        } else if (action === "close-voluntary-review") {
+            closeVoluntaryReview();
         } else if (action === "select-book") {
             selectBook(trigger.dataset.bookId, "dashboard");
         } else if (action === "open-book-lists") {
@@ -3457,6 +3611,9 @@
                         : "new",
                 studyMode: trigger.dataset.studyMode || "meaning",
             });
+        } else if (action === "open-voluntary-review-book") {
+            selectBook(trigger.dataset.bookId);
+            openVoluntaryReview();
         } else if (action === "study-group") {
             startStudy({
                 mode:
@@ -3671,6 +3828,14 @@
             if (file) {
                 importProgress(file);
             }
+        } else if (event.target.closest("#voluntary-review-form")) {
+            updateVoluntaryReviewPreview();
+        }
+    });
+
+    document.addEventListener("input", (event) => {
+        if (event.target.closest("#voluntary-review-form")) {
+            updateVoluntaryReviewPreview();
         }
     });
 
@@ -3707,16 +3872,34 @@
         }
     });
 
+    document.getElementById("voluntary-review-form")?.addEventListener("submit", (event) => {
+        event.preventDefault();
+        const data = new FormData(event.currentTarget);
+        const groupId = String(data.get("scope") || "");
+        closeVoluntaryReview();
+        startStudy({
+            mode: "voluntary-review",
+            groupIds: groupId ? [groupId] : [],
+            reviewStrategy: String(data.get("strategy") || "balanced"),
+            reviewCount: clamp(data.get("reviewCount"), 1, 100),
+            studyMode: String(data.get("studyMode") || "meaning"),
+        });
+    });
+
     document.addEventListener("keydown", (event) => {
         const settingsOpen = !document.querySelector('[data-modal="settings"]')?.hidden;
         const bookImportOpen = !document.querySelector('[data-modal="book-import"]')?.hidden;
-        if (settingsOpen || bookImportOpen) {
+        const voluntaryReviewOpen = !document.querySelector('[data-modal="voluntary-review"]')?.hidden;
+        if (settingsOpen || bookImportOpen || voluntaryReviewOpen) {
             if (event.key === "Escape") {
                 if (settingsOpen) {
                     closeSettings();
                 }
                 if (bookImportOpen) {
                     closeBookImport();
+                }
+                if (voluntaryReviewOpen) {
+                    closeVoluntaryReview();
                 }
             }
             return;
