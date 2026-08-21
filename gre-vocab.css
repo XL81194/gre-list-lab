@@ -2061,7 +2061,335 @@ button {
     text-align: center;
 }
 
+.equivalence-hero {
+    background:
+        radial-gradient(circle at 82% 18%, rgba(216, 241, 111, 0.24), transparent 28%),
+        linear-gradient(135deg, #153d33 0%, #205b49 56%, #163d34 100%);
+}
+
+.equivalence-pass-grid {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 12px;
+    margin-top: 18px;
+}
+
+.equivalence-pass-card {
+    display: grid;
+    gap: 7px;
+    min-width: 0;
+    padding: 18px;
+    color: var(--ink);
+    text-align: left;
+    background: rgba(255, 255, 255, 0.82);
+    border: 1px solid var(--line);
+    border-radius: 22px;
+    box-shadow: var(--shadow-soft);
+    cursor: pointer;
+    transition: transform 180ms ease, border-color 180ms ease;
+}
+
+.equivalence-pass-card:hover {
+    transform: translateY(-3px);
+    border-color: rgba(31, 91, 73, 0.4);
+}
+
+.equivalence-pass-card.is-done {
+    background: #edf7ef;
+}
+
+.equivalence-pass-card > span:first-child,
+.equivalence-pass-card small {
+    color: var(--muted);
+    font-size: 0.78rem;
+}
+
+.equivalence-pass-card strong {
+    font-family: var(--font-serif);
+    font-size: 1.16rem;
+}
+
+.equivalence-pass-card .progress-track {
+    margin-top: 4px;
+}
+
+.equivalence-guide {
+    margin-top: 18px;
+}
+
+.equivalence-guide-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 14px;
+}
+
+.equivalence-guide-grid > div {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    padding: 16px;
+    background: var(--soft-green);
+    border-radius: 18px;
+}
+
+.equivalence-guide-grid b,
+.agenda-pass-number {
+    display: grid;
+    width: 36px;
+    height: 36px;
+    flex: 0 0 36px;
+    place-items: center;
+    color: #fff;
+    background: var(--green);
+    border-radius: 12px;
+}
+
+.equivalence-guide-grid span {
+    display: grid;
+    gap: 3px;
+}
+
+.equivalence-guide-grid small {
+    color: var(--muted);
+}
+
+.equivalence-day-grid {
+    display: grid;
+    gap: 18px;
+}
+
+.equivalence-day-card {
+    min-height: 0;
+}
+
+.equivalence-day-passes {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 10px;
+    margin-top: 18px;
+}
+
+.equivalence-day-passes button {
+    display: grid;
+    gap: 8px;
+    min-width: 0;
+    padding: 14px;
+    color: var(--ink);
+    text-align: left;
+    background: #f7f8f4;
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    cursor: pointer;
+}
+
+.equivalence-day-passes button:hover {
+    border-color: var(--green);
+}
+
+.equivalence-day-passes button > span:first-child {
+    overflow: hidden;
+    font-size: 0.78rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.equivalence-day-passes button strong {
+    color: var(--green);
+}
+
+.equivalence-plan-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 4px 0 18px;
+}
+
+.equivalence-plan-legend span {
+    display: inline-flex;
+    gap: 7px;
+    align-items: center;
+    padding: 7px 10px;
+    color: var(--muted);
+    font-size: 0.78rem;
+    background: #f4f5f1;
+    border-radius: 999px;
+}
+
+.equivalence-plan-legend b {
+    color: var(--green);
+}
+
+.equivalence-day-task {
+    border-left: 3px solid var(--green);
+}
+
+.agenda-pass-number {
+    font-weight: 800;
+}
+
+.equivalence-anchor {
+    position: relative;
+    text-align: center;
+}
+
+.equivalence-anchor .speak-button {
+    margin-top: 14px;
+}
+
+.equivalence-question {
+    width: min(860px, 100%);
+    margin: 0 auto;
+    text-align: center;
+}
+
+.equivalence-sentence {
+    max-width: 780px;
+    margin: 24px auto 12px;
+    font-family: var(--font-serif);
+    font-size: clamp(1.65rem, 3vw, 2.65rem);
+    line-height: 1.3;
+}
+
+.equivalence-meaning-prompt {
+    margin: 20px 0 6px;
+    font-family: var(--font-serif);
+    font-size: clamp(2rem, 5vw, 4rem);
+}
+
+.context-fallback-note {
+    max-width: 720px;
+    margin: 0 auto 18px;
+    padding: 10px 14px;
+    color: #735a22;
+    font-size: 0.82rem;
+    line-height: 1.55;
+    background: #fff3d5;
+    border-radius: 12px;
+}
+
+.equivalence-option-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    margin-top: 24px;
+}
+
+.equivalence-option {
+    display: flex;
+    gap: 13px;
+    align-items: center;
+    min-height: 68px;
+    padding: 14px 16px;
+    color: var(--ink);
+    text-align: left;
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    cursor: pointer;
+    transition: background 160ms ease, border-color 160ms ease, transform 160ms ease;
+}
+
+.equivalence-option:hover {
+    transform: translateY(-2px);
+    border-color: rgba(31, 91, 73, 0.55);
+}
+
+.equivalence-option.is-selected {
+    background: #e5f2ec;
+    border-color: var(--green);
+    box-shadow: 0 0 0 2px rgba(31, 91, 73, 0.1);
+}
+
+.equivalence-option > span {
+    display: grid;
+    width: 30px;
+    height: 30px;
+    flex: 0 0 30px;
+    place-items: center;
+    color: var(--green);
+    font-size: 0.78rem;
+    font-weight: 800;
+    background: var(--soft-green);
+    border-radius: 9px;
+}
+
+.equivalence-option strong {
+    font-size: 1.08rem;
+}
+
+.equivalence-submit {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 16px;
+    margin-top: 20px;
+}
+
+.equivalence-submit > span {
+    color: var(--muted);
+    font-size: 0.84rem;
+}
+
+.equivalence-feedback .feedback-meaning-hero h2 {
+    font-size: clamp(2.5rem, 6vw, 5.4rem);
+}
+
+.equivalence-family-reveal {
+    padding: 20px;
+    background: #f3f5f0;
+    border-radius: 20px;
+}
+
+.equivalence-family-reveal > small,
+.equivalence-context-review small,
+.related-family-row > small {
+    display: block;
+    margin-bottom: 12px;
+    color: var(--muted);
+    font-weight: 700;
+}
+
+.equivalence-family-reveal > div {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 9px;
+}
+
+.equivalence-chip {
+    padding: 10px 14px;
+    color: var(--green);
+    font-size: 1.04rem;
+    font-weight: 800;
+    background: #fff;
+    border: 1px solid rgba(31, 91, 73, 0.18);
+    border-radius: 999px;
+}
+
+.equivalence-chip.is-anchor {
+    color: #fff;
+    background: var(--green);
+}
+
+.equivalence-context-review,
+.related-family-row {
+    padding: 17px 20px;
+    line-height: 1.6;
+    background: #fffaf0;
+    border: 1px solid #f0e3c5;
+    border-radius: 18px;
+}
+
+.related-family-row span {
+    display: block;
+    color: var(--muted);
+    font-size: 0.86rem;
+}
+
 @media (max-width: 1100px) {
+    .equivalence-pass-grid,
+    .equivalence-day-passes {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
     .metric-grid,
     .book-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2279,6 +2607,44 @@ button {
 
     .note-row {
         grid-template-columns: 1fr;
+    }
+
+    .equivalence-pass-grid,
+    .equivalence-day-passes,
+    .equivalence-guide-grid,
+    .equivalence-option-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .equivalence-pass-grid {
+        gap: 9px;
+    }
+
+    .equivalence-pass-card {
+        padding: 14px 16px;
+    }
+
+    .equivalence-day-passes button {
+        padding: 12px;
+    }
+
+    .equivalence-submit {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .equivalence-submit .button {
+        width: 100%;
+    }
+
+    .equivalence-sentence {
+        font-size: 1.55rem;
+    }
+
+    .equivalence-family-reveal,
+    .equivalence-context-review,
+    .related-family-row {
+        padding: 15px;
     }
 
     #settings-form label,

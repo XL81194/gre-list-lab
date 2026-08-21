@@ -3,11 +3,27 @@
 
     const STORAGE_KEY = "gre-list-lab-state-v1";
     const CUSTOM_BOOKS_KEY = "gre-list-lab-custom-books-v1";
-    const BACKUP_VERSION = 1;
+    const BACKUP_VERSION = 2;
     const REVIEW_OFFSETS = [0, 1, 3, 7, 14, 29];
     const MAX_INTRA_CYCLES = 12;
     const BATCH_SIZE = 20;
     const MEANING_FLOW_VERSION = 2;
+    const EQUIVALENCE_BOOK_ID = "equivalents";
+    const EQUIVALENCE_FLOW_VERSION = 1;
+    const EQUIVALENCE_BATCH_SIZE = 25;
+    const EQUIVALENCE_PASS_NAMES = {
+        1: "词义锚点",
+        2: "寻找搭档",
+        3: "反向提取",
+        4: "混合辨析",
+        5: "语境迁移",
+    };
+    const EQUIVALENCE_ERROR_LABELS = {
+        unknownAnchor: "不认识主词",
+        forgotPartner: "忘记搭档",
+        confusedGroup: "混淆其他组",
+        contextMismatch: "不能放进语境",
+    };
     const QUALITY_SCORE = { wrong: 0, hard: 3, good: 4, easy: 5 };
     const INITIAL_EF = { easy: 2.8, good: 2.5, hard: 1.8, wrong: 1.3 };
     const INTRA_EF = { easy: 0.15, good: 0.05, hard: -0.1, wrong: -0.2 };
@@ -200,6 +216,10 @@
         return BOOKS.find((book) => book.id === state.selectedBookId) || BOOKS[0] || null;
     }
 
+    function isEquivalentBook(book) {
+        return Boolean(book && book.id === EQUIVALENCE_BOOK_ID);
+    }
+
     function savedSessionForBook(book) {
         const saved = state.savedSession;
         if (!book || !saved || saved.bookId !== book.id || !Array.isArray(saved.roundWordIds)) {
@@ -225,6 +245,15 @@
         const saved = savedSessionForBook(currentBook());
         if (!saved) {
             toast("没有可继续的学习记录。");
+            return;
+        }
+        if (isEquivalentBook(currentBook()) && saved.studyMode !== "equivalence") {
+            startEquivalentStudy({
+                pass: 1,
+                wordIds: saved.roundWordIds,
+                title: saved.title || "继续旧版学习记录",
+            });
+            toast("旧版等价词进度已保留，并切换为词义组模式。");
             return;
         }
         session = JSON.parse(JSON.stringify(saved));
@@ -267,6 +296,184 @@
             ...value,
         };
         saveState();
+    }
+
+    function equivalentMembers(word) {
+        const related = String(word?.equivalents || "")
+            .split(/[,;\/]+/)
+            .map((item) => item.trim())
+            .filter(Boolean);
+        return [...new Set([String(word?.word || "").trim(), ...related].filter(Boolean))];
+    }
+
+    function equivalentProgress(book, word) {
+        const progress = getProgress(book.id, word.id);
+        const equivalence = progress.equivalence || {};
+        return {
+            ...progress,
+            equivalence: {
+                passes: equivalence.passes && typeof equivalence.passes === "object"
+                    ? equivalence.passes
+                    : {},
+                attempts: Number(equivalence.attempts || 0),
+                correct: Number(equivalence.correct || 0),
+                weakScore: Number(equivalence.weakScore || 0),
+                errorCounts:
+                    equivalence.errorCounts && typeof equivalence.errorCounts === "object"
+                        ? equivalence.errorCounts
+                        : {},
+                weakReviewDates: Array.isArray(equivalence.weakReviewDates)
+                    ? equivalence.weakReviewDates
+                    : [],
+                completedWeakReviewDates: Array.isArray(equivalence.completedWeakReviewDates)
+                    ? equivalence.completedWeakReviewDates
+                    : [],
+                lastResponseMs: Number(equivalence.lastResponseMs || 0),
+                ...equivalence,
+            },
+        };
+    }
+
+    function passRecord(book, word, pass) {
+        return equivalentProgress(book, word).equivalence.passes[String(pass)] || {};
+    }
+
+    function migrateEquivalentProgress() {
+        const book = BOOKS.find((item) => isEquivalentBook(item));
+        if (!book) {
+            return;
+        }
+        let changed = false;
+        allWords(book).forEach((word) => {
+            const progress = getProgress(book.id, word.id);
+            if (!progress.lastReviewed || progress.equivalence?.passes?.["1"]) {
+                return;
+            }
+            if (!state.progress[book.id]) {
+                state.progress[book.id] = {};
+            }
+            state.progress[book.id][word.id] = {
+                ...progress,
+                equivalence: {
+                    ...(progress.equivalence || {}),
+                    passes: {
+                        ...(progress.equivalence?.passes || {}),
+                        1: {
+                            completedAt: progress.lastReviewed,
+                            attempts: 1,
+                            correct: progress.correctCount > 0 ? 1 : 0,
+                            legacy: true,
+                        },
+                    },
+                },
+            };
+            changed = true;
+        });
+        if (changed) {
+            saveState();
+        }
+    }
+
+    function equivalentStats(book) {
+        const words = allWords(book);
+        const passCounts = [1, 2, 3, 4, 5].map(
+            (pass) => words.filter((word) => passRecord(book, word, pass).completedAt).length
+        );
+        const metric = (passes) => {
+            let attempts = 0;
+            let correct = 0;
+            words.forEach((word) => {
+                passes.forEach((pass) => {
+                    const record = passRecord(book, word, pass);
+                    attempts += Number(record.attempts || 0);
+                    correct += Number(record.correct || 0);
+                });
+            });
+            return attempts ? Math.round((correct / attempts) * 100) : 0;
+        };
+        const today = localDateKey(new Date());
+        const weakWords = words.filter((word) => {
+            const eq = equivalentProgress(book, word).equivalence;
+            return eq.weakScore > 0 || eq.weakReviewDates.some(
+                (date) => !eq.completedWeakReviewDates.includes(date)
+            );
+        });
+        const dueWeak = weakWords.filter((word) => {
+            const eq = equivalentProgress(book, word).equivalence;
+            return eq.weakReviewDates.some(
+                (date) => date <= today && !eq.completedWeakReviewDates.includes(date)
+            );
+        });
+        return {
+            total: words.length,
+            passCounts,
+            passPercents: passCounts.map((count) =>
+                words.length ? Math.round((count / words.length) * 100) : 0
+            ),
+            learned: passCounts[0],
+            partnerAccuracy: metric([2]),
+            reverseAccuracy: metric([3]),
+            contextAccuracy: metric([5]),
+            weak: weakWords.length,
+            dueWeak: dueWeak.length,
+        };
+    }
+
+    function nextEquivalentPass(book) {
+        const stats = equivalentStats(book);
+        const firstIncomplete = stats.passCounts.findIndex((count) => count < stats.total);
+        return firstIncomplete < 0 ? 5 : firstIncomplete + 1;
+    }
+
+    function equivalentTaskComplete(book, pass, groupIds) {
+        const words = groupIds.flatMap(
+            (groupId) => groupIndex.get(`${book.id}:${groupId}`)?.words || []
+        );
+        return words.length > 0 && words.every((word) => passRecord(book, word, pass).completedAt);
+    }
+
+    function buildEquivalencePlan(book) {
+        const startDate = parseLocalDate(
+            state.plans[book.id]?.startDate || localDateKey(new Date())
+        );
+        const schedule = [
+            [[1, [0]]],
+            [[1, [1]], [2, [0]]],
+            [[1, [2]], [2, [1]]],
+            [[1, [3]], [2, [2]]],
+            [[1, [4]], [2, [3]]],
+            [[2, [4]], [3, [0]]],
+            [[3, [1, 2]]],
+            [[3, [3, 4]]],
+            [[4, [0, 1]]],
+            [[4, [2, 3]]],
+            [[4, [4]]],
+            [[5, [0, 1]]],
+            [[5, [2, 3]]],
+            [[5, [4]]],
+        ];
+        const tasks = [];
+        schedule.forEach((dailyTasks, dayIndex) => {
+            dailyTasks.forEach(([pass, groupIndexes]) => {
+                const groups = groupIndexes.map((index) => book.groups[index]).filter(Boolean);
+                const groupIds = groups.map((group) => group.id);
+                const date = localDateKey(addDays(startDate, dayIndex));
+                const key = [book.id, localDateKey(startDate), "equivalence", pass, dayIndex, groupIds.join(",")].join("|");
+                tasks.push({
+                    key,
+                    bookId: book.id,
+                    date,
+                    type: "equivalence",
+                    equivalencePass: pass,
+                    label: `第 ${pass} 遍 · ${groupRangeLabel(groups)}`,
+                    groupIds,
+                    wordIds: groups.flatMap((group) => group.words.map((word) => word.id)),
+                    offset: dayIndex,
+                    done: equivalentTaskComplete(book, pass, groupIds),
+                });
+            });
+        });
+        return tasks;
     }
 
     function getBookStats(book) {
@@ -336,6 +543,9 @@
     function buildPlan(book) {
         if (!book) {
             return [];
+        }
+        if (isEquivalentBook(book)) {
+            return buildEquivalencePlan(book);
         }
         const planSettings = {
             ...DEFAULT_PLAN,
@@ -510,10 +720,141 @@
         }
     }
 
+    function renderEquivalentDashboard(target, book) {
+        const stats = equivalentStats(book);
+        const todayKey = localDateKey(new Date());
+        const todayTasks = buildEquivalencePlan(book).filter((task) => task.date === todayKey);
+        const savedSession = savedSessionForBook(book);
+        const nextPass = nextEquivalentPass(book);
+        const todayPlan = todayTasks.length
+            ? todayTasks.map((task) => `
+                <div class="plan-task ${task.done ? "is-done" : ""}">
+                    <span class="plan-task-icon">${task.equivalencePass}</span>
+                    <span>${escapeHtml(task.label)} · ${task.done ? "已完成" : "每次 25 组"}</span>
+                </div>
+            `).join("")
+            : `<div class="plan-task"><span class="plan-task-icon">→</span><span>今天没有固定任务，可继续下一遍或处理到期弱项。</span></div>`;
+        target.innerHTML = `
+            <div class="hero equivalence-hero">
+                <div class="hero-copy">
+                    <span class="eyebrow">14 DAYS · 5 PASSES</span>
+                    <h1>不是背一个词，<br>而是记住它的搭档。</h1>
+                    <p>全书 ${stats.total} 个等价词组。中文只负责建立词义锚点，后续重点训练英文搭档、反向提取、混合辨析和 GRE 迁移。</p>
+                    <div class="hero-actions">
+                        ${savedSession ? `<button class="button button-primary" type="button" data-action="resume-study">继续上次 · 第 ${savedSession.equivalencePass || nextPass} 遍</button>` : ""}
+                        <button class="button button-primary" type="button" data-action="start-equivalence-pass" data-pass="${nextPass}">继续第 ${nextPass} 遍 · ${EQUIVALENCE_PASS_NAMES[nextPass]}</button>
+                        <button class="button button-outline-light" type="button" data-action="start-equivalence-review">到期弱项 · ${stats.dueWeak}</button>
+                        <button class="button button-outline-light" type="button" data-route="calendar">查看两周计划</button>
+                    </div>
+                </div>
+                <div class="hero-plan">
+                    <div class="hero-plan-head">
+                        <div><small>计划完成度 · 已学习词组</small><strong>${stats.learned} / ${stats.total}</strong></div>
+                        <span class="plan-ring" style="--progress:${stats.passPercents[0] * 3.6}deg" data-label="${stats.passPercents[0]}%"></span>
+                    </div>
+                    <div class="plan-task-list">${todayPlan}</div>
+                </div>
+            </div>
+            <div class="equivalence-pass-grid">
+                ${[1, 2, 3, 4, 5].map((pass) => `
+                    <button class="equivalence-pass-card ${stats.passCounts[pass - 1] === stats.total ? "is-done" : ""}" type="button" data-action="start-equivalence-pass" data-pass="${pass}">
+                        <span>第 ${pass} 遍</span>
+                        <strong>${EQUIVALENCE_PASS_NAMES[pass]}</strong>
+                        <small>${stats.passCounts[pass - 1]} / ${stats.total} 组</small>
+                        <span class="progress-track"><span style="width:${stats.passPercents[pass - 1]}%"></span></span>
+                    </button>
+                `).join("")}
+            </div>
+            <div class="metric-grid equivalence-metrics">
+                <div class="metric-card"><span>搭档正确率</span><strong>${stats.partnerAccuracy}%</strong><small>第二遍英文配对</small></div>
+                <div class="metric-card"><span>反向正确率</span><strong>${stats.reverseAccuracy}%</strong><small>第三遍随机方向</small></div>
+                <div class="metric-card"><span>语境正确率</span><strong>${stats.contextAccuracy}%</strong><small>第五遍迁移训练</small></div>
+                <div class="metric-card"><span>当前弱项</span><strong>${stats.weak}</strong><small>${stats.dueWeak} 组已到期</small></div>
+            </div>
+            <section class="panel equivalence-guide">
+                <div class="panel-head"><h2>今天怎么学</h2><button class="text-button" type="button" data-route="lists">查看原书五天 →</button></div>
+                <div class="equivalence-guide-grid">
+                    <div><b>1</b><span><strong>先建锚点</strong><small>看主词，确认核心中文方向</small></span></div>
+                    <div><b>2–3</b><span><strong>主动找搭档</strong><small>英文选英文，正反两向提取</small></span></div>
+                    <div><b>4–5</b><span><strong>再混合辨析</strong><small>近义干扰与可靠语境迁移</small></span></div>
+                </div>
+            </section>
+        `;
+    }
+
+    function renderEquivalentLists(target, book) {
+        const query = ui.listQuery.trim().toLowerCase();
+        const groups = book.groups.filter((group) => !query ||
+            group.label.toLowerCase().includes(query) ||
+            group.words.some((word) =>
+                `${word.word} ${word.equivalents || ""} ${word.meaning || ""}`.toLowerCase().includes(query)
+            )
+        );
+        target.innerHTML = `
+            <div class="page-heading equivalence-heading">
+                <div><span class="eyebrow">SYNONYM FAMILIES · ORIGINAL ORDER</span><h1 id="lists-title">等价词组<br>五遍训练</h1><p>共 ${book.wordCount.toLocaleString()} 个原书词组。每个词组保持独立，不因词语重叠而强行合并。</p></div>
+                <button class="button button-dark" type="button" data-action="start-equivalence-pass" data-pass="${nextEquivalentPass(book)}">继续当前一遍</button>
+            </div>
+            <div class="lists-toolbar">
+                <div class="search-box"><span>⌕</span><input data-field="list-search" type="search" value="${escapeHtml(ui.listQuery)}" placeholder="搜索天数、主词、等价词或词义"></div>
+                <div class="toolbar-actions"><button class="button button-dark" type="button" data-action="start-equivalence-review">复习到期弱项</button></div>
+            </div>
+            <div class="equivalence-day-grid">
+                ${groups.map((group) => {
+                    const passCounts = [1, 2, 3, 4, 5].map((pass) =>
+                        group.words.filter((word) => passRecord(book, word, pass).completedAt).length
+                    );
+                    const firstIncomplete = passCounts.findIndex((count) => count < group.words.length);
+                    const suggestedPass = firstIncomplete < 0 ? 5 : firstIncomplete + 1;
+                    return `
+                        <article class="list-card equivalence-day-card" style="--book-accent:${book.accent}">
+                            <div class="list-card-head"><div><h3>${escapeHtml(group.label)}</h3><small>${group.words.length} 个等价词组</small></div><span class="status-pill ${firstIncomplete < 0 ? "is-done" : firstIncomplete > 0 ? "is-started" : ""}">${firstIncomplete < 0 ? "五遍完成" : `进行到第 ${suggestedPass} 遍`}</span></div>
+                            <div class="equivalence-day-passes">
+                                ${[1, 2, 3, 4, 5].map((pass) => {
+                                    const percent = Math.round((passCounts[pass - 1] / group.words.length) * 100);
+                                    return `<button type="button" data-action="start-equivalence-pass" data-pass="${pass}" data-group-id="${escapeHtml(group.id)}"><span>第 ${pass} 遍 · ${EQUIVALENCE_PASS_NAMES[pass]}</span><strong>${passCounts[pass - 1]}/${group.words.length}</strong><span class="progress-track"><span style="width:${percent}%"></span></span></button>`;
+                                }).join("")}
+                            </div>
+                        </article>
+                    `;
+                }).join("") || `<div class="empty-state">没有找到匹配的词组。</div>`}
+            </div>
+        `;
+    }
+
+    function renderEquivalentCalendar(target, book) {
+        const plan = buildEquivalencePlan(book);
+        planTaskMap = new Map(plan.map((task) => [task.key, task]));
+        const startDate = state.plans[book.id]?.startDate || localDateKey(new Date());
+        const monthTitle = new Intl.DateTimeFormat("zh-CN", { year: "numeric", month: "long" }).format(ui.calendarMonth);
+        const cells = calendarCells(ui.calendarMonth);
+        const selectedTasks = plan.filter((task) => task.date === ui.calendarSelectedDate);
+        target.innerHTML = `
+            <div class="page-heading"><div><span class="eyebrow">14 DAYS · FIVE PURPOSEFUL PASSES</span><h1 id="calendar-title">等价词两周计划</h1><p>前四遍覆盖全书，第五遍完成语境迁移；每天按原书顺序拆成 25 组小循环。调整开始日期只重排日历，不清空任何进度。</p></div></div>
+            <div class="calendar-layout">
+                <section class="calendar-card">
+                    <div class="calendar-controls"><div class="calendar-controls-left"><button class="icon-button" type="button" data-action="calendar-prev" aria-label="上个月">‹</button><strong class="calendar-month">${escapeHtml(monthTitle)}</strong><button class="icon-button" type="button" data-action="calendar-next" aria-label="下个月">›</button></div><div class="calendar-controls-right"><label>开始日期 <input data-field="plan-start" type="date" value="${escapeHtml(startDate)}"></label><button class="button button-soft" type="button" data-action="calendar-today">今天</button></div></div>
+                    <div class="equivalence-plan-legend">${[1,2,3,4,5].map((pass) => `<span><b>${pass}</b>${EQUIVALENCE_PASS_NAMES[pass]}</span>`).join("")}</div>
+                    <div class="calendar-weekdays">${["SUN","MON","TUE","WED","THU","FRI","SAT"].map((day) => `<span>${day}</span>`).join("")}</div>
+                    <div class="calendar-grid">${cells.map((date) => {
+                        const dateKey = localDateKey(date);
+                        const tasks = plan.filter((task) => task.date === dateKey);
+                        return `<div class="calendar-day ${date.getMonth() !== ui.calendarMonth.getMonth() ? "is-other" : ""} ${sameDate(date, new Date()) ? "is-today" : ""}" data-action="select-calendar-date" data-date="${dateKey}"><span class="day-number">${date.getDate()}</span><div class="day-tasks">${tasks.map((task) => `<button class="day-task equivalence-day-task pass-${task.equivalencePass} ${task.done ? "is-done" : ""}" type="button" data-action="select-calendar-date" data-date="${dateKey}"><span class="day-task-dot"></span><span>${task.equivalencePass} · ${escapeHtml(task.label.replace(/^第 \d 遍 · /, ""))}</span></button>`).join("")}</div></div>`;
+                    }).join("")}</div>
+                </section>
+                <aside class="agenda-card"><div><span class="eyebrow">AGENDA</span><h2>${escapeHtml(formatLongDate(ui.calendarSelectedDate))}</h2><p>${selectedTasks.length ? `${selectedTasks.length} 项等价词任务` : "今天没有固定任务"}</p><div class="plan-note">计划从 ${startDate} 开始，共 14 天。完成度由实际答过的词组自动计算。</div></div><div class="agenda-list">${selectedTasks.length ? selectedTasks.map((task) => `<div class="agenda-item ${task.done ? "is-done" : ""}"><div class="agenda-item-head"><span class="agenda-pass-number">${task.equivalencePass}</span><span><strong>${escapeHtml(task.label)}</strong><small>${task.done ? "这一范围已经完成" : "按原书顺序，每次继续 25 组"}</small></span></div><button class="button button-soft" type="button" data-action="start-plan-task" data-task-key="${escapeHtml(task.key)}">${task.done ? "再次练习" : "开始这项任务"}</button></div>`).join("") : `<div class="empty-state">选中有任务的日期开始学习。</div>`}</div></aside>
+            </div>
+        `;
+    }
+
     function renderDashboard() {
         const target = document.getElementById("dashboard-content");
         const book = currentBook();
         if (!target || !book) {
+            return;
+        }
+        if (isEquivalentBook(book)) {
+            renderEquivalentDashboard(target, book);
             return;
         }
         const stats = getBookStats(book);
@@ -655,16 +996,16 @@
                             <h2>${escapeHtml(book.title)}</h2>
                             <p>${escapeHtml(book.subtitle)}</p>
                             <div class="book-card-stats">
-                                <span><strong>${book.groupCount}</strong><small>LIST / DAY</small></span>
-                                <span><strong>${book.wordCount.toLocaleString()}</strong><small>WORDS</small></span>
-                                <span><strong>${stats.due}</strong><small>DUE</small></span>
+                                <span><strong>${book.groupCount}</strong><small>${isEquivalentBook(book) ? "BOOK DAYS" : "LIST / DAY"}</small></span>
+                                <span><strong>${book.wordCount.toLocaleString()}</strong><small>${isEquivalentBook(book) ? "FAMILIES" : "WORDS"}</small></span>
+                                <span><strong>${isEquivalentBook(book) ? equivalentStats(book).dueWeak : stats.due}</strong><small>DUE</small></span>
                             </div>
                             <span class="progress-track"><span style="width:${stats.learnedPercent}%"></span></span>
                             <div class="book-card-actions">
                                 <button class="button button-soft" type="button" data-action="open-book-lists" data-book-id="${escapeHtml(book.id)}">查看分组</button>
-                                <button class="button button-dark" type="button" data-action="study-book" data-study-kind="new" data-study-mode="meaning" data-book-id="${escapeHtml(book.id)}">学习新词</button>
-                                <button class="button button-soft" type="button" data-action="study-book" data-study-kind="review" data-study-mode="meaning" data-book-id="${escapeHtml(book.id)}">到期复习</button>
-                                <button class="button button-soft" type="button" data-action="study-book" data-study-kind="review" data-study-mode="spelling" data-book-id="${escapeHtml(book.id)}">练拼写</button>
+                                ${isEquivalentBook(book)
+                                    ? `<button class="button button-dark" type="button" data-action="start-equivalence-book" data-book-id="${escapeHtml(book.id)}">进入五遍训练</button><button class="button button-soft" type="button" data-action="start-equivalence-review-book" data-book-id="${escapeHtml(book.id)}">弱项复习</button>`
+                                    : `<button class="button button-dark" type="button" data-action="study-book" data-study-kind="new" data-study-mode="meaning" data-book-id="${escapeHtml(book.id)}">学习新词</button><button class="button button-soft" type="button" data-action="study-book" data-study-kind="review" data-study-mode="meaning" data-book-id="${escapeHtml(book.id)}">到期复习</button><button class="button button-soft" type="button" data-action="study-book" data-study-kind="review" data-study-mode="spelling" data-book-id="${escapeHtml(book.id)}">练拼写</button>`}
                             </div>
                         </article>
                     `;
@@ -677,6 +1018,10 @@
         const target = document.getElementById("lists-content");
         const book = currentBook();
         if (!target || !book) {
+            return;
+        }
+        if (isEquivalentBook(book)) {
+            renderEquivalentLists(target, book);
             return;
         }
         const query = ui.listQuery.trim().toLowerCase();
@@ -760,6 +1105,10 @@
         const target = document.getElementById("calendar-content");
         const book = currentBook();
         if (!target || !book) {
+            return;
+        }
+        if (isEquivalentBook(book)) {
+            renderEquivalentCalendar(target, book);
             return;
         }
         const plan = buildPlan(book);
@@ -933,9 +1282,420 @@
         });
     }
 
+    const EQUIVALENCE_CONTEXT_BANK = {
+        mitigate: { sentence: "The emergency measures helped ___ the worst effects of the shortage.", pair: ["mitigate", "ameliorate"] },
+        anomaly: { sentence: "Researchers treated the unexpected result as an ___ rather than a new trend.", pair: ["anomaly", "aberration"] },
+        exonerate: { sentence: "The newly discovered records may ___ the official of any wrongdoing.", pair: ["exonerate", "absolve"] },
+        specious: { sentence: "The proposal rested on a ___ argument that collapsed under scrutiny.", pair: ["specious", "spurious"] },
+        reluctant: { sentence: "Even after the evidence was presented, the committee remained ___ to change its position.", pair: ["reluctant", "loath"] },
+        nebulous: { sentence: "The policy's goals were so ___ that departments interpreted them differently.", pair: ["nebulous", "vague"] },
+        prolix: { sentence: "The editor shortened the author's needlessly ___ introduction.", pair: ["prolix", "verbose"] },
+        mercurial: { sentence: "Because the market was unusually ___, yesterday's forecast quickly became obsolete.", pair: ["mercurial", "volatile"] },
+        prevalent: { sentence: "The belief was once ___ among scholars in the field.", pair: ["prevalent", "widespread"] },
+        refractory: { sentence: "The ___ faction resisted every attempt at compromise.", pair: ["refractory", "recalcitrant"] },
+        enthrall: { sentence: "The vivid account continued to ___ readers decades after its publication.", pair: ["enthrall", "captivate"] },
+    };
+
+    function shuffledBySeed(items, seed) {
+        return [...items].sort(
+            (a, b) => stableHash(`${seed}:${a}`) - stableHash(`${seed}:${b}`)
+        );
+    }
+
+    function equivalentDistractors(book, word, excluded, confusing = false) {
+        const excludedSet = new Set(excluded.map((item) => item.toLowerCase()));
+        const sourceMeaning = normalizeSemantic(chineseMeaning(word.meaning));
+        const candidates = allWords(book)
+            .filter((candidate) => candidate.id !== word.id)
+            .flatMap((candidate) =>
+                equivalentMembers(candidate).map((text) => ({
+                    text,
+                    similarity: diceSimilarity(
+                        sourceMeaning,
+                        normalizeSemantic(chineseMeaning(candidate.meaning))
+                    ),
+                }))
+            )
+            .filter((candidate) => !excludedSet.has(candidate.text.toLowerCase()));
+        const unique = [...new Map(candidates.map((item) => [item.text.toLowerCase(), item])).values()];
+        return unique
+            .sort((a, b) =>
+                confusing
+                    ? b.similarity - a.similarity || stableHash(`${word.id}:${a.text}`) - stableHash(`${word.id}:${b.text}`)
+                    : stableHash(`${word.id}:${a.text}`) - stableHash(`${word.id}:${b.text}`)
+            )
+            .map((item) => item.text);
+    }
+
+    function buildEquivalentOptions(book, word, correctTexts, seed, confusing = false) {
+        const correct = [...new Set(correctTexts.filter(Boolean))];
+        const distractors = equivalentDistractors(book, word, correct, confusing)
+            .slice(0, Math.max(3, 6 - correct.length));
+        return shuffledBySeed([...correct, ...distractors], seed).map((text) => ({
+            text,
+            correct: correct.some((item) => item.toLowerCase() === text.toLowerCase()),
+        }));
+    }
+
+    function buildEquivalentQuestion(book, word, pass, attempt = 1) {
+        const members = equivalentMembers(word);
+        const seed = `${word.id}:pass-${pass}:attempt-${attempt}`;
+        if (pass === 2) {
+            const correct = members.slice(1);
+            return {
+                promptWord: members[0],
+                prompt: "选出原书中与它同组的所有等价词",
+                options: buildEquivalentOptions(book, word, correct, seed),
+                correctTexts: correct,
+            };
+        }
+        if (pass === 3) {
+            const promptIndex = stableHash(seed) % members.length;
+            const promptWord = members[promptIndex];
+            const correct = members.filter((_, index) => index !== promptIndex);
+            return {
+                promptWord,
+                prompt: "方向已经打乱，找出这个词在原书中的其余搭档",
+                options: buildEquivalentOptions(book, word, correct, seed),
+                correctTexts: correct,
+            };
+        }
+        if (pass === 4) {
+            return {
+                promptWord: chineseMeaning(word.meaning),
+                prompt: "从相近干扰项中选出属于这个核心词义组的全部英文表达",
+                options: buildEquivalentOptions(book, word, members, seed, true),
+                correctTexts: members,
+                meaningPrompt: true,
+            };
+        }
+        const context = EQUIVALENCE_CONTEXT_BANK[String(word.word || "").toLowerCase()];
+        if (context && context.pair.every((item) => members.some((member) => member.toLowerCase() === item))) {
+            return {
+                promptWord: "",
+                prompt: "选出两个都能使整句成立，并让完整句子意思相近的答案",
+                sentence: context.sentence,
+                options: buildEquivalentOptions(book, word, context.pair, seed, true),
+                correctTexts: context.pair,
+                reliableContext: true,
+            };
+        }
+        const fallbackCorrect = members.slice(1);
+        return {
+            promptWord: members[0],
+            prompt: "原书没有经过确认的例句，本组使用快速英文配对，不自动造句",
+            options: buildEquivalentOptions(book, word, fallbackCorrect, seed, true),
+            correctTexts: fallbackCorrect,
+            contextFallback: true,
+        };
+    }
+
+    function dueEquivalentWords(book) {
+        const today = localDateKey(new Date());
+        const weak = allWords(book).filter((word) => {
+            const eq = equivalentProgress(book, word).equivalence;
+            return eq.weakReviewDates.some(
+                (date) => date <= today && !eq.completedWeakReviewDates.includes(date)
+            );
+        });
+        return weak.length
+            ? weak
+            : allWords(book).filter(
+                (word) => equivalentProgress(book, word).equivalence.weakScore > 0
+            );
+    }
+
+    function startEquivalentStudy(options = {}) {
+        const book = currentBook();
+        if (!isEquivalentBook(book)) {
+            return;
+        }
+        const pass = clamp(options.pass || nextEquivalentPass(book), 1, 5);
+        let scopedWords = [];
+        let groupIds = Array.isArray(options.groupIds) ? options.groupIds.filter(Boolean) : [];
+        const wordIds = Array.isArray(options.wordIds) ? options.wordIds : [];
+        if (options.mode === "weak-review") {
+            scopedWords = dueEquivalentWords(book);
+        } else if (wordIds.length) {
+            scopedWords = wordIds.map((wordId) => wordIndex.get(wordId)?.word).filter(Boolean);
+        } else {
+            if (!groupIds.length) {
+                const todayTask = buildEquivalencePlan(book).find(
+                    (task) => task.date === localDateKey(new Date()) && task.equivalencePass === pass && !task.done
+                );
+                if (todayTask) {
+                    groupIds = todayTask.groupIds;
+                } else {
+                    const nextGroup = book.groups.find((group) =>
+                        group.words.some((word) => !passRecord(book, word, pass).completedAt)
+                    );
+                    groupIds = nextGroup ? [nextGroup.id] : [book.groups[0]?.id].filter(Boolean);
+                }
+            }
+            scopedWords = groupIds.flatMap(
+                (groupId) => groupIndex.get(`${book.id}:${groupId}`)?.words || []
+            );
+        }
+        let candidates = options.mode === "weak-review"
+            ? scopedWords
+            : scopedWords.filter((word) => !passRecord(book, word, pass).completedAt);
+        if (!candidates.length && scopedWords.length) {
+            candidates = scopedWords;
+        }
+        candidates = uniqueWords(candidates).slice(0, EQUIVALENCE_BATCH_SIZE);
+        if (!candidates.length) {
+            toast(options.mode === "weak-review" ? "当前没有需要复习的弱项。" : "这一范围已经完成。 ");
+            return;
+        }
+        session = {
+            bookId: book.id,
+            title: options.title || (options.mode === "weak-review" ? "到期弱项复习" : `第 ${pass} 遍 · ${groupRangeLabel(groupIds.map((id) => groupIndex.get(`${book.id}:${id}`)).filter(Boolean))}`),
+            studyMode: "equivalence",
+            flowVersion: EQUIVALENCE_FLOW_VERSION,
+            equivalencePass: options.mode === "weak-review" ? 4 : pass,
+            isWeakReview: options.mode === "weak-review",
+            sourceTaskKey: options.taskKey || null,
+            sourceTaskType: options.taskType || null,
+            sourceGroupIds: groupIds,
+            sourceWordIds: scopedWords.map((word) => word.id),
+            roundWordIds: candidates.map((word) => word.id),
+            activeQueue: candidates.map((word) => ({ wordId: word.id, reinforcement: false })),
+            current: null,
+            stage: "loading",
+            selectedOptionIndices: [],
+            attemptsById: {},
+            reinforcementCounts: {},
+            scheduledCount: candidates.length,
+            answeredCount: 0,
+            totalTarget: candidates.length,
+            completedWordIds: [],
+            completed: 0,
+            correct: 0,
+            near: 0,
+            wrong: 0,
+            lastResult: null,
+        };
+        clearSavedSession();
+        moveToNextEquivalent();
+        navigate("study");
+    }
+
+    function prepareEquivalentCurrent() {
+        const book = sessionBook();
+        const word = sessionWord();
+        if (!book || !word || !session.current) {
+            return;
+        }
+        const pass = session.equivalencePass;
+        const attempt = Number(session.attemptsById[word.id] || 0) + 1;
+        session.selectedOptionIndices = [];
+        session.current.startedAt = Date.now();
+        session.current.attempt = attempt;
+        if (pass === 1) {
+            session.stage = "equiv-anchor";
+        } else {
+            session.current.question = buildEquivalentQuestion(book, word, pass, attempt);
+            session.stage = "equiv-question";
+        }
+    }
+
+    function moveToNextEquivalent() {
+        if (!session || session.studyMode !== "equivalence") {
+            return;
+        }
+        session.lastResult = null;
+        if (!session.activeQueue.length) {
+            session.current = null;
+            session.stage = "complete";
+            clearSavedSession();
+            renderStudy();
+            return;
+        }
+        session.current = session.activeQueue.shift();
+        prepareEquivalentCurrent();
+        persistStudySession();
+        renderStudy();
+    }
+
+    function queueEquivalentReinforcement(wordId, quality) {
+        if (quality === "easy" || !session || session.reinforcementCounts[wordId]) {
+            return false;
+        }
+        const gap = 5 + (stableHash(`${wordId}:${session.answeredCount}`) % 4);
+        const position = Math.min(session.activeQueue.length, gap);
+        session.activeQueue.splice(position, 0, { wordId, reinforcement: true });
+        session.activeQueue.push({ wordId, reinforcement: true, endReview: true });
+        session.reinforcementCounts[wordId] = 2;
+        session.scheduledCount += 2;
+        return true;
+    }
+
+    function updateEquivalentProgress(book, word, quality, errorType) {
+        const now = new Date();
+        const today = localDateKey(now);
+        const progress = equivalentProgress(book, word);
+        const eq = progress.equivalence;
+        const passKey = String(session.equivalencePass);
+        const record = eq.passes[passKey] || {};
+        const correct = quality === "easy";
+        const responseMs = Math.max(0, Date.now() - Number(session.current.startedAt || Date.now()));
+        const slow = responseMs > 5000;
+        const weakDates = [...eq.weakReviewDates];
+        if (!correct || slow) {
+            [1, 3, 7].forEach((offset) => {
+                const date = localDateKey(addDays(now, offset));
+                if (!weakDates.includes(date)) {
+                    weakDates.push(date);
+                }
+            });
+        }
+        const completedWeakDates = [...eq.completedWeakReviewDates];
+        if (correct) {
+            weakDates.forEach((date) => {
+                if (date <= today && !completedWeakDates.includes(date)) {
+                    completedWeakDates.push(date);
+                }
+            });
+        }
+        const errorCounts = { ...eq.errorCounts };
+        if (!correct && errorType) {
+            errorCounts[errorType] = Number(errorCounts[errorType] || 0) + 1;
+        }
+        const nextProgress = {
+            ...progress,
+            lastReviewed: now.toISOString(),
+            nextReview: addDays(now, correct ? 7 : 1).toISOString(),
+            correctCount: Number(progress.correctCount || 0) + (correct ? 1 : 0),
+            repetitions: Number(progress.repetitions || 0) + 1,
+            equivalence: {
+                ...eq,
+                passes: session.isWeakReview
+                    ? eq.passes
+                    : {
+                          ...eq.passes,
+                          [passKey]: {
+                              ...record,
+                              completedAt: record.completedAt || now.toISOString(),
+                              lastAnsweredAt: now.toISOString(),
+                              attempts: Number(record.attempts || 0) + 1,
+                              correct: Number(record.correct || 0) + (correct ? 1 : 0),
+                          },
+                      },
+                weakReviewAttempts: Number(eq.weakReviewAttempts || 0) + (session.isWeakReview ? 1 : 0),
+                attempts: eq.attempts + 1,
+                correct: eq.correct + (correct ? 1 : 0),
+                weakScore: Math.max(0, eq.weakScore + (quality === "wrong" ? 2 : quality === "good" || slow ? 1 : -1)),
+                errorCounts,
+                weakReviewDates: weakDates.sort(),
+                completedWeakReviewDates: completedWeakDates.sort(),
+                lastResponseMs: responseMs,
+            },
+        };
+        setProgress(book.id, word.id, nextProgress);
+        return responseMs;
+    }
+
+    function equivalentErrorType(pass) {
+        return pass === 1 ? "unknownAnchor" : pass <= 3 ? "forgotPartner" : pass === 4 ? "confusedGroup" : "contextMismatch";
+    }
+
+    function commitEquivalentAnswer(quality, typed, selectedTexts = []) {
+        const book = sessionBook();
+        const word = sessionWord();
+        if (!book || !word || !session?.current) {
+            return;
+        }
+        const pass = session.equivalencePass;
+        const errorType = quality === "easy" ? "" : equivalentErrorType(pass);
+        const responseMs = updateEquivalentProgress(book, word, quality, errorType);
+        session.attemptsById[word.id] = Number(session.attemptsById[word.id] || 0) + 1;
+        const reinforced = queueEquivalentReinforcement(word.id, quality);
+        if (!session.completedWordIds.includes(word.id)) {
+            session.completedWordIds.push(word.id);
+            session.completed += 1;
+        }
+        session.answeredCount += 1;
+        if (quality === "easy") {
+            session.correct += 1;
+        } else if (quality === "good") {
+            session.near += 1;
+        } else {
+            session.wrong += 1;
+        }
+        session.lastResult = {
+            status: quality === "easy" ? "correct" : quality === "good" ? "near" : "wrong",
+            quality,
+            qualityLabel: quality === "easy" ? "回答正确" : quality === "good" ? "需要加固" : "回答错误",
+            typed,
+            selectedTexts,
+            errorType,
+            reinforced,
+            responseMs,
+            question: session.current.question || null,
+        };
+        session.stage = "equiv-feedback";
+        persistStudySession();
+        renderStudy();
+    }
+
+    function rateEquivalent(quality) {
+        if (!session || session.stage !== "equiv-anchor") {
+            return;
+        }
+        const labels = { easy: "认识", good: "模糊", wrong: "不认识" };
+        commitEquivalentAnswer(quality, labels[quality] || "模糊");
+    }
+
+    function toggleEquivalentOption(index) {
+        if (!session || session.stage !== "equiv-question") {
+            return;
+        }
+        const numeric = Number(index);
+        const selected = new Set(session.selectedOptionIndices || []);
+        if (selected.has(numeric)) {
+            selected.delete(numeric);
+        } else {
+            selected.add(numeric);
+        }
+        session.selectedOptionIndices = [...selected].sort((a, b) => a - b);
+        persistStudySession();
+        renderStudy();
+    }
+
+    function submitEquivalentAnswer() {
+        if (!session || session.stage !== "equiv-question") {
+            return;
+        }
+        const question = session.current.question;
+        const selectedIndices = session.selectedOptionIndices || [];
+        if (!selectedIndices.length) {
+            toast("请先选择你认为属于同一组的英文词。");
+            return;
+        }
+        const selected = selectedIndices.map((index) => question.options[index]).filter(Boolean);
+        const selectedTexts = selected.map((option) => option.text);
+        const correctSet = new Set(question.correctTexts.map((item) => item.toLowerCase()));
+        const selectedSet = new Set(selectedTexts.map((item) => item.toLowerCase()));
+        const exact = correctSet.size === selectedSet.size && [...correctSet].every((item) => selectedSet.has(item));
+        const overlap = [...selectedSet].filter((item) => correctSet.has(item)).length;
+        const quality = exact ? "easy" : overlap >= Math.ceil(correctSet.size / 2) ? "good" : "wrong";
+        commitEquivalentAnswer(quality, selectedTexts.join("、"), selectedTexts);
+    }
+
     function startStudy(options = {}) {
         const book = currentBook();
         if (!book) {
+            return;
+        }
+        if (isEquivalentBook(book) && options.studyMode !== "spelling") {
+            startEquivalentStudy({
+                mode: options.mode?.includes("review") ? "weak-review" : "pass",
+                pass: options.pass,
+                groupIds: options.groupIds,
+                wordIds: options.wordIds,
+                taskKey: options.taskKey,
+                taskType: options.taskType,
+            });
             return;
         }
         const mode = options.mode || "new";
@@ -1070,6 +1830,10 @@
 
     function moveToNextWord() {
         if (!session) {
+            return;
+        }
+        if (session.studyMode === "equivalence") {
+            moveToNextEquivalent();
             return;
         }
         session.lastResult = null;
@@ -1423,12 +2187,13 @@
         }
         const book = sessionBook();
         const word = sessionWord();
+        const isRecallFlow = session.studyMode === "meaning" || session.studyMode === "equivalence";
         const totalSteps =
-            session.studyMode === "meaning"
+            isRecallFlow
                 ? Math.max(session.scheduledCount || 0, session.answeredCount || 0, 1)
                 : session.totalTarget;
         const totalDone =
-            session.studyMode === "meaning"
+            isRecallFlow
                 ? Math.min(session.answeredCount || 0, totalSteps)
                 : Math.min(session.completed, totalSteps);
         const percent = totalSteps
@@ -1443,7 +2208,7 @@
                         <button class="save-exit-button" type="button" data-action="save-and-leave-study" aria-label="保存进度并退出">← 保存并退出</button>
                         <div>
                             <h1 id="study-title">${escapeHtml(session.title)}</h1>
-                            <p>${escapeHtml(book?.title || "")} · ${session.studyMode === "spelling" ? "进阶拼写检测" : `20 词微循环 · ${session.meaningRound === 1 ? "认识判断" : session.meaningRound === 2 ? "英译汉选义" : "中文释义填空"}`}</p>
+                            <p>${escapeHtml(book?.title || "")} · ${session.studyMode === "spelling" ? "进阶拼写检测" : session.studyMode === "equivalence" ? session.isWeakReview ? "25 组微循环 · 到期弱项复习" : `25 组微循环 · 第 ${session.equivalencePass} 遍 ${EQUIVALENCE_PASS_NAMES[session.equivalencePass]}` : `20 词微循环 · ${session.meaningRound === 1 ? "认识判断" : session.meaningRound === 2 ? "英译汉选义" : "中文释义填空"}`}</p>
                         </div>
                     </div>
                     <div class="study-progress">
@@ -1465,7 +2230,79 @@
         }
     }
 
+    function relatedEquivalentRows(book, word) {
+        const members = new Set(equivalentMembers(word).map((item) => item.toLowerCase()));
+        return allWords(book)
+            .filter((candidate) =>
+                candidate.id !== word.id &&
+                equivalentMembers(candidate).some((member) => members.has(member.toLowerCase()))
+            )
+            .slice(0, 3);
+    }
+
+    function renderEquivalentStudyCardBody(book, word) {
+        if (session.stage === "complete") {
+            const accuracy = session.answeredCount
+                ? Math.round((session.correct / session.answeredCount) * 100)
+                : 0;
+            return `
+                <div class="session-finish equivalence-finish">
+                    <div><span class="finish-mark">${session.equivalencePass}</span><h2>本次 ${session.totalTarget} 组完成</h2><p>位置和每个词组的答题记录已经保存。再次进入这一遍时，会严格从后续未完成词组继续。</p><div class="finish-stats"><span><strong>${session.completed}</strong><small>覆盖词组</small></span><span><strong>${accuracy}%</strong><small>直接答对</small></span><span><strong>${session.near + session.wrong}</strong><small>已加入弱项</small></span></div><button class="button button-dark" type="button" data-action="finish-session">返回今日</button></div>
+                </div>
+            `;
+        }
+        if (!word || !book) {
+            return `<div class="empty-state">正在准备等价词组…</div>`;
+        }
+        const context = wordIndex.get(word.id);
+        const members = equivalentMembers(word);
+        if (session.stage === "equiv-anchor") {
+            return `
+                <div class="study-meta"><span>${escapeHtml(context?.group.label || "")}</span><span>${session.current.reinforcement ? "再次确认 · 词义锚点" : "第 1 遍 · 词义锚点"}</span></div>
+                <div class="equivalence-anchor"><span class="eyebrow">ANCHOR WORD</span><div class="study-word">${escapeHtml(word.word)}</div><button class="speak-button" type="button" data-action="speak-word" aria-label="朗读单词">◖</button><p class="study-prompt">先只判断你是否知道它的核心意思。选择后再看完整等价词组，不要求现在回忆全部搭档。</p></div>
+                <div class="rating-row"><button class="rating-button easy" type="button" data-equiv-quality="easy">认识<small>立即知道核心意思</small></button><button class="rating-button good" type="button" data-equiv-quality="good">模糊<small>方向对，但不确定</small></button><button class="rating-button hard" type="button" data-equiv-quality="wrong">不认识<small>没有想起正确词义</small></button></div>
+            `;
+        }
+        if (session.stage === "equiv-question") {
+            const question = session.current.question;
+            const selected = new Set(session.selectedOptionIndices || []);
+            return `
+                <div class="study-meta"><span>${escapeHtml(context?.group.label || "")}</span><span>${session.current.reinforcement ? "再次加固" : `第 ${session.equivalencePass} 遍 · ${EQUIVALENCE_PASS_NAMES[session.equivalencePass]}`}</span></div>
+                <div class="equivalence-question">
+                    ${question.sentence ? `<span class="eyebrow">GRE SENTENCE EQUIVALENCE</span><h2 class="equivalence-sentence">${escapeHtml(question.sentence)}</h2>` : question.meaningPrompt ? `<span class="eyebrow">核心词义</span><h2 class="equivalence-meaning-prompt">${escapeHtml(question.promptWord)}</h2>` : `<span class="eyebrow">提示词</span><div class="study-word choice-word">${escapeHtml(question.promptWord)}</div>`}
+                    <p class="study-prompt">${escapeHtml(question.prompt)}</p>
+                    ${question.contextFallback ? `<div class="context-fallback-note">本题不计作自动生成语境，避免把只在特定上下文成立的词误当成完全同义词。</div>` : ""}
+                    <div class="equivalence-option-grid">${question.options.map((option, index) => `<button class="equivalence-option ${selected.has(index) ? "is-selected" : ""}" type="button" data-action="toggle-equiv-option" data-choice-index="${index}" aria-pressed="${selected.has(index)}"><span>${String.fromCharCode(65 + index)}</span><strong>${escapeHtml(option.text)}</strong></button>`).join("")}</div>
+                    <div class="equivalence-submit"><span>已选择 ${selected.size} 项 · 支持多选</span><button class="button button-dark" type="button" data-action="submit-equiv-answer">提交答案</button></div>
+                </div>
+            `;
+        }
+        if (session.stage === "equiv-feedback") {
+            const result = session.lastResult;
+            const related = relatedEquivalentRows(book, word);
+            const primaryMeaning = chineseMeaning(word.meaning);
+            const errorLabel = result.errorType ? EQUIVALENCE_ERROR_LABELS[result.errorType] : "本次匹配正确";
+            return `
+                <div class="study-meta"><span>${escapeHtml(context?.group.label || "")}</span><span>${escapeHtml(errorLabel)}</span></div>
+                <div class="feedback equivalence-feedback">
+                    <div class="feedback-meaning-hero"><span class="eyebrow">核心词义</span><h2>${escapeHtml(primaryMeaning)}</h2><p><strong>${escapeHtml(word.word)}</strong><button class="speak-button" type="button" data-action="speak-word" aria-label="朗读主词">◖</button></p></div>
+                    <div class="equivalence-family-reveal"><small>原书完整等价词组</small><div>${members.map((member, index) => `<span class="equivalence-chip ${index === 0 ? "is-anchor" : ""}">${escapeHtml(member)}</span>`).join("")}</div></div>
+                    ${result.question?.sentence ? `<div class="equivalence-context-review"><small>本题语境</small><strong>${escapeHtml(result.question.sentence)}</strong></div>` : ""}
+                    <div class="feedback-status"><span><b>${result.status === "correct" ? "✓" : result.status === "near" ? "↻" : "!"}</b>${escapeHtml(result.qualityLabel)}</span><small>${result.reinforced ? "已安排在隔开 5–8 组后和本轮末尾再次出现" : result.responseMs > 5000 ? "本次反应超过 5 秒，已记录为速度弱项" : `反应时间 ${(result.responseMs / 1000).toFixed(1)} 秒`}</small></div>
+                    <div class="answer-grid"><div class="answer-cell"><small>你的回答</small><strong>${escapeHtml(result.typed || "未选择")}</strong></div><div class="answer-cell"><small>错误类型</small><strong>${escapeHtml(errorLabel)}</strong></div><div class="answer-cell is-wide"><small>原书中文释义</small><strong>${escapeHtml(word.meaning)}</strong></div></div>
+                    ${related.length ? `<div class="related-family-row"><small>有关联但未强行合并的原书词组</small>${related.map((item) => `<span>${escapeHtml(equivalentMembers(item).join(" · "))}</span>`).join("")}</div>` : ""}
+                    <div class="note-row"><input data-field="word-note" type="text" value="${escapeHtml(state.notes[word.id] || "")}" placeholder="记录语境差异、易混词或联想"><button class="button button-soft" type="button" data-action="save-note">保存笔记</button></div>
+                    <div class="feedback-actions"><button class="button button-dark" type="button" data-action="next-word">下一组（Enter）</button></div>
+                </div>
+            `;
+        }
+        return `<div class="empty-state">正在准备下一组…</div>`;
+    }
+
     function renderStudyCardBody(book, word) {
+        if (session?.studyMode === "equivalence") {
+            return renderEquivalentStudyCardBody(book, word);
+        }
         if (session.stage === "batch-finished") {
             return `
                 <div class="session-finish">
@@ -2197,7 +3034,10 @@
             return;
         }
         window.speechSynthesis.cancel();
-        const utterance = new SpeechSynthesisUtterance(word.word);
+        const spokenText = session?.studyMode === "equivalence"
+            ? session.current?.question?.promptWord || word.word
+            : word.word;
+        const utterance = new SpeechSynthesisUtterance(spokenText);
         utterance.lang = "en-US";
         utterance.rate = 0.82;
         window.speechSynthesis.speak(utterance);
@@ -2602,6 +3442,12 @@
             selectBook(trigger.dataset.bookId, "dashboard");
         } else if (action === "open-book-lists") {
             selectBook(trigger.dataset.bookId, "lists");
+        } else if (action === "start-equivalence-book") {
+            selectBook(trigger.dataset.bookId);
+            startEquivalentStudy({ pass: nextEquivalentPass(currentBook()) });
+        } else if (action === "start-equivalence-review-book") {
+            selectBook(trigger.dataset.bookId);
+            startEquivalentStudy({ mode: "weak-review", pass: 4 });
         } else if (action === "study-book") {
             selectBook(trigger.dataset.bookId);
             startStudy({
@@ -2630,6 +3476,13 @@
                 mode: "due-review",
                 studyMode: trigger.dataset.studyMode || "meaning",
             });
+        } else if (action === "start-equivalence-pass") {
+            startEquivalentStudy({
+                pass: Number(trigger.dataset.pass || nextEquivalentPass(currentBook())),
+                groupIds: trigger.dataset.groupId ? [trigger.dataset.groupId] : [],
+            });
+        } else if (action === "start-equivalence-review") {
+            startEquivalentStudy({ mode: "weak-review", pass: 4 });
         } else if (action === "resume-study") {
             resumeSavedSession();
         } else if (action === "calendar-prev") {
@@ -2666,14 +3519,24 @@
         } else if (action === "start-plan-task") {
             const task = planTaskMap.get(trigger.dataset.taskKey);
             if (task) {
-                startStudy({
-                    mode: task.type === "review" ? "plan-review" : "group-new",
-                    groupIds: task.groupIds,
-                    wordIds: task.wordIds,
-                    taskKey: task.key,
-                    taskType: task.type,
-                    studyMode: "meaning",
-                });
+                if (task.equivalencePass) {
+                    startEquivalentStudy({
+                        pass: task.equivalencePass,
+                        groupIds: task.groupIds,
+                        wordIds: task.wordIds,
+                        taskKey: task.key,
+                        taskType: task.type,
+                    });
+                } else {
+                    startStudy({
+                        mode: task.type === "review" ? "plan-review" : "group-new",
+                        groupIds: task.groupIds,
+                        wordIds: task.wordIds,
+                        taskKey: task.key,
+                        taskType: task.type,
+                        studyMode: "meaning",
+                    });
+                }
             }
         } else if (action === "save-and-leave-study") {
             persistStudySession();
@@ -2683,6 +3546,10 @@
             speakCurrentWord();
         } else if (action === "choose-meaning") {
             chooseMeaning(trigger.dataset.choiceIndex);
+        } else if (action === "toggle-equiv-option") {
+            toggleEquivalentOption(trigger.dataset.choiceIndex);
+        } else if (action === "submit-equiv-answer") {
+            submitEquivalentAnswer();
         } else if (action === "submit-meaning") {
             submitMeaningInput();
         } else if (action === "confirm-semantic") {
@@ -2717,6 +3584,11 @@
     });
 
     document.addEventListener("click", (event) => {
+        const equivalentRating = event.target.closest("[data-equiv-quality]");
+        if (equivalentRating) {
+            rateEquivalent(equivalentRating.dataset.equivQuality);
+            return;
+        }
         const rating = event.target.closest("[data-quality]");
         if (rating) {
             rateMeaning(rating.dataset.quality);
@@ -2853,7 +3725,13 @@
             return;
         }
         if (event.key === "Enter") {
-            if (session.stage === "spelling") {
+            if (session.stage === "equiv-question") {
+                event.preventDefault();
+                submitEquivalentAnswer();
+            } else if (session.stage === "equiv-feedback") {
+                event.preventDefault();
+                moveToNextEquivalent();
+            } else if (session.stage === "spelling") {
                 event.preventDefault();
                 submitSpelling(false);
             } else if (
@@ -2876,5 +3754,6 @@
         }
     });
 
+    migrateEquivalentProgress();
     render();
 })(window, document);
