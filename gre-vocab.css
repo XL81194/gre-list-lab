@@ -1957,14 +1957,16 @@ button {
 }
 
 #settings-form,
-#book-import-form {
+#book-import-form,
+#voluntary-review-form {
     display: grid;
     gap: 15px;
     margin-top: 24px;
 }
 
 #settings-form label,
-#book-import-form label {
+#book-import-form label,
+#voluntary-review-form label {
     display: grid;
     grid-template-columns: minmax(0, 1fr) 105px;
     gap: 3px 14px;
@@ -1972,18 +1974,22 @@ button {
 }
 
 #settings-form label > span,
-#book-import-form label > span {
+#book-import-form label > span,
+#voluntary-review-form label > span {
     font-weight: 750;
 }
 
 #settings-form label > small,
-#book-import-form label > small {
+#book-import-form label > small,
+#voluntary-review-form label > small {
     color: var(--muted);
     font-size: 11px;
 }
 
 #settings-form input,
-#book-import-form input {
+#book-import-form input,
+#voluntary-review-form input,
+#voluntary-review-form select {
     grid-area: 1 / 2 / 3 / 3;
     width: 100%;
     min-height: 45px;
@@ -1991,6 +1997,23 @@ button {
     border: 1px solid var(--line);
     border-radius: 12px;
     background: #fff;
+}
+
+.list-card-buttons button:disabled {
+    cursor: not-allowed;
+    opacity: 0.42;
+    transform: none;
+    filter: grayscale(0.2);
+}
+
+.voluntary-review-note {
+    padding: 14px 15px;
+    border: 1px solid rgba(31, 91, 72, 0.14);
+    border-radius: 14px;
+    color: var(--green-dark);
+    background: var(--mint);
+    font-size: 12px;
+    line-height: 1.6;
 }
 
 .import-tip {
@@ -2648,12 +2671,15 @@ button {
     }
 
     #settings-form label,
-    #book-import-form label {
+    #book-import-form label,
+    #voluntary-review-form label {
         grid-template-columns: 1fr;
     }
 
     #settings-form input,
-    #book-import-form input {
+    #book-import-form input,
+    #voluntary-review-form input,
+    #voluntary-review-form select {
         grid-area: auto;
     }
 }
