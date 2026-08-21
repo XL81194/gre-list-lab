@@ -175,6 +175,24 @@
             </div>
         </div>
 
+        <div class="modal" data-modal="voluntary-review" hidden>
+            <button class="modal-backdrop" type="button" data-action="close-voluntary-review" aria-label="关闭自主复习"></button>
+            <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="voluntary-review-title">
+                <div class="modal-head">
+                    <div><span class="eyebrow">REVIEW ANYTIME</span><h2 id="voluntary-review-title">自主复习</h2></div>
+                    <button class="icon-button" type="button" data-action="close-voluntary-review" aria-label="关闭">×</button>
+                </div>
+                <form id="voluntary-review-form">
+                    <label><span>复习范围</span><small>可以复习整本词书，也可以只复习某个 Day / List</small><select name="scope" aria-label="自主复习范围"></select></label>
+                    <label><span>抽词方式</span><small>“均衡轮换”会优先选择自主复习次数较少、较久没练的词</small><select name="strategy" aria-label="自主复习抽词方式"><option value="balanced">全部已学词 · 均衡轮换</option><option value="weak">模糊与薄弱词优先</option><option value="random">全部已学词 · 随机抽取</option></select></label>
+                    <label><span>本次数量</span><small>只会从已经学过的词中抽取</small><input name="reviewCount" type="number" min="1" max="100" value="20" required></label>
+                    <label><span>练习方式</span><small>词义模式使用认识判断、四选一和中文释义填空</small><select name="studyMode" aria-label="自主复习练习方式"><option value="meaning">快速刷词义</option><option value="spelling">拼写检测</option></select></label>
+                    <div class="voluntary-review-note" data-review-preview>自主复习不会改变原计划中的到期复习日期。</div>
+                    <div class="modal-actions"><button class="button button-ghost" type="button" data-action="close-voluntary-review">取消</button><button class="button button-primary" type="submit">开始自主复习</button></div>
+                </form>
+            </div>
+        </div>
+
         <div class="toast-region" aria-live="polite" aria-atomic="true"></div>
 
         <script src="books.js"></script>
