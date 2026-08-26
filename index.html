@@ -52,6 +52,10 @@
                     <button class="settings-link" type="button" data-action="open-settings">
                         学习设置 <span>›</span>
                     </button>
+                    <button class="settings-link cloud-link" type="button" data-cloud-action="open-sync">
+                        <span><i class="cloud-dot" aria-hidden="true"></i><span data-cloud-status>仅本机保存</span></span>
+                        <span>›</span>
+                    </button>
                     <button class="back-link" type="button" data-route="dashboard">回到今日</button>
                 </div>
             </aside>
@@ -193,9 +197,97 @@
             </div>
         </div>
 
+        <div class="modal" data-modal="cloud-sync" hidden>
+            <button class="modal-backdrop" type="button" data-cloud-action="close-sync" aria-label="关闭云同步"></button>
+            <div class="modal-card cloud-modal-card" role="dialog" aria-modal="true" aria-labelledby="cloud-sync-title">
+                <div class="modal-head">
+                    <div><span class="eyebrow">PROGRESS &amp; SYNC</span><h2 id="cloud-sync-title">进度保存与云同步</h2></div>
+                    <button class="icon-button" type="button" data-cloud-action="close-sync" aria-label="关闭">×</button>
+                </div>
+                <div class="cloud-state-card">
+                    <span class="cloud-state-icon" aria-hidden="true">☁</span>
+                    <div><strong data-cloud-status>仅本机保存</strong><small data-cloud-detail>每次答题后自动保存在这台设备</small></div>
+                </div>
+                <div class="cloud-unavailable" data-cloud-unconfigured>
+                    云同步正在配置中。现在的每次答题仍会自动保存在本机浏览器；你也可以在“学习设置”中导出进度备份。
+                </div>
+                <div data-cloud-configured hidden>
+                    <div class="cloud-auth-block" data-cloud-signed-out>
+                        <h3>在手机、电脑间同步</h3>
+                        <p>输入邮箱，我们会发送一次性登录链接，不需要设置密码。</p>
+                        <form id="cloud-login-form" class="cloud-login-form">
+                            <input name="email" type="email" autocomplete="email" placeholder="你的邮箱" required>
+                            <button class="button button-primary" type="submit" data-requires-cloud>发送登录链接</button>
+                        </form>
+                    </div>
+                    <div class="cloud-auth-block" data-cloud-signed-in hidden>
+                        <h3>已开启云同步</h3>
+                        <p>登录邮箱：<strong data-cloud-email>未登录</strong></p>
+                        <div class="cloud-account-actions">
+                            <button class="button button-primary" type="button" data-cloud-action="sync-now">立即同步</button>
+                            <button class="button button-soft" type="button" data-cloud-action="sign-out">退出云同步</button>
+                            <button class="button button-ghost text-danger" type="button" data-cloud-action="delete-cloud-progress">删除云端进度</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="cloud-safety-note">
+                    <strong>进度到底怎么保存？</strong>
+                    <p>默认先写入当前浏览器的本地存储，登录后再合并到云端。断网也能继续学；退出登录或删除云端数据都不会删除本机进度。你导入的 PDF 和词书原文件不会上传。</p>
+                </div>
+                <div class="modal-actions modal-actions-between">
+                    <button class="button button-ghost" type="button" data-cloud-action="open-privacy">隐私与数据说明</button>
+                    <button class="button button-soft" type="button" data-cloud-action="close-sync">完成</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="modal" data-modal="feedback" hidden>
+            <button class="modal-backdrop" type="button" data-cloud-action="close-feedback" aria-label="关闭意见反馈"></button>
+            <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="feedback-title">
+                <div class="modal-head">
+                    <div><span class="eyebrow">BETA FEEDBACK</span><h2 id="feedback-title">告诉我哪里需要改</h2></div>
+                    <button class="icon-button" type="button" data-cloud-action="close-feedback" aria-label="关闭">×</button>
+                </div>
+                <form id="feedback-form" class="feedback-form">
+                    <div class="feedback-fields-two">
+                        <label><span>反馈类型</span><select name="category"><option value="content">词义或词书内容</option><option value="progress">进度或同步</option><option value="usability">使用不顺手</option><option value="bug">功能故障</option><option value="suggestion" selected>新功能建议</option></select></label>
+                        <label><span>影响程度</span><select name="impact"><option value="minor">不影响继续学习</option><option value="medium" selected>有点影响使用</option><option value="blocking">无法继续学习</option></select></label>
+                    </div>
+                    <label><span>具体情况</span><small>最好写上出现在哪本词书、哪个 List / Day，以及你刚刚做了什么</small><textarea name="message" minlength="4" maxlength="2000" rows="6" placeholder="例如：在机经词 Day 1 做中文释义填空时……" required></textarea></label>
+                    <label><span>联系方式（选填）</span><small>如果希望收到回复，可以填写邮箱或其他联系方式</small><input name="contact" type="text" maxlength="160" autocomplete="email"></label>
+                    <label class="feedback-consent"><input name="consent" type="checkbox" required><span>我同意提交上述内容及必要的页面环境信息，用于排查问题。不会提交词书原文或我的完整学习记录。</span></label>
+                    <label class="feedback-honeypot" aria-hidden="true">请留空<input name="website" type="text" tabindex="-1" autocomplete="off"></label>
+                    <div class="modal-actions"><button class="button button-ghost" type="button" data-cloud-action="close-feedback">取消</button><button class="button button-primary" type="submit">提交反馈</button></div>
+                </form>
+            </div>
+        </div>
+
+        <div class="modal" data-modal="privacy" hidden>
+            <button class="modal-backdrop" type="button" data-cloud-action="close-privacy" aria-label="关闭隐私说明"></button>
+            <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="privacy-title">
+                <div class="modal-head">
+                    <div><span class="eyebrow">PRIVACY</span><h2 id="privacy-title">隐私与数据说明</h2></div>
+                    <button class="icon-button" type="button" data-cloud-action="close-privacy" aria-label="关闭">×</button>
+                </div>
+                <div class="privacy-copy">
+                    <section><h3>默认只保存在本机</h3><p>学习进度、日历和设置会在每次操作后保存到当前浏览器。本机数据可能因清理浏览器数据、无痕模式或更换设备而丢失，建议定期导出备份。</p></section>
+                    <section><h3>云同步由你选择</h3><p>只有使用邮箱登录后，学习进度才会同步到云端。同步内容包括学习状态、复习时间、计划和设置；你导入的 PDF、词书原文件及自定义词书内容不会上传。</p></section>
+                    <section><h3>意见反馈</h3><p>反馈会包含你主动填写的内容，以及当前词书、页面、练习模式、屏幕尺寸和浏览器类型等排错信息，不会包含完整学习记录。联系方式可以不填。</p></section>
+                    <section><h3>你可以删除</h3><p>可在“进度保存与云同步”中删除云端学习进度，本机数据仍保留。反馈记录如需删除，请通过反馈中的联系方式提出。</p></section>
+                    <section><h3>非官方说明</h3><p>本工具为独立学习项目，与 ETS 无隶属或背书关系。公开测试时请只使用你有权使用和分享的词书资料。</p></section>
+                </div>
+                <div class="modal-actions"><button class="button button-primary" type="button" data-cloud-action="close-privacy">我知道了</button></div>
+            </div>
+        </div>
+
+        <button class="floating-feedback" type="button" data-cloud-action="open-feedback" aria-label="提交意见反馈">意见反馈</button>
+
         <div class="toast-region" aria-live="polite" aria-atomic="true"></div>
 
         <script src="books.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+        <script src="supabase-config.js"></script>
         <script src="gre-vocab-app.js"></script>
+        <script src="cloud-sync.js"></script>
     </body>
 </html>

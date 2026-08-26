@@ -136,6 +136,7 @@
     function saveState() {
         try {
             window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+            window.dispatchEvent(new CustomEvent("gre:state-saved"));
         } catch (error) {
             console.warn("[GRE List Lab] 无法保存本地进度", error);
             toast("本地进度保存失败，请导出备份。");

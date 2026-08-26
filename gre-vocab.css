@@ -238,6 +238,32 @@ button {
     color: var(--ink);
 }
 
+.cloud-link > span:first-child {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+}
+
+.cloud-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #a9b0aa;
+    box-shadow: 0 0 0 4px rgba(169, 176, 170, 0.14);
+}
+
+.cloud-link:has(.is-syncing) .cloud-dot {
+    background: #d69b28;
+}
+
+.cloud-link:has(.is-synced) .cloud-dot {
+    background: var(--green);
+}
+
+.cloud-link:has(.is-error) .cloud-dot {
+    background: #c55045;
+}
+
 .main {
     min-width: 0;
 }
@@ -2032,6 +2058,242 @@ button {
     margin-top: 8px;
 }
 
+.cloud-modal-card {
+    width: min(100%, 620px);
+}
+
+.cloud-state-card {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-top: 22px;
+    padding: 17px 18px;
+    border: 1px solid rgba(31, 91, 72, 0.14);
+    border-radius: 18px;
+    background: linear-gradient(135deg, var(--mint), #f8faed);
+}
+
+.cloud-state-icon {
+    display: grid;
+    width: 46px;
+    height: 46px;
+    flex: 0 0 auto;
+    border-radius: 14px;
+    color: #fff;
+    background: var(--green);
+    place-items: center;
+    font-size: 22px;
+}
+
+.cloud-state-card strong,
+.cloud-state-card small {
+    display: block;
+}
+
+.cloud-state-card strong {
+    font-size: 17px;
+}
+
+.cloud-state-card small {
+    margin-top: 4px;
+    color: var(--muted);
+    line-height: 1.45;
+}
+
+.cloud-status.is-syncing {
+    color: #9a6711;
+}
+
+.cloud-status.is-synced {
+    color: var(--green-dark);
+}
+
+.cloud-status.is-error {
+    color: #a53a32;
+}
+
+.cloud-unavailable,
+.cloud-safety-note {
+    margin-top: 16px;
+    padding: 15px 16px;
+    border-radius: 15px;
+    color: var(--muted);
+    background: #eff1eb;
+    font-size: 12px;
+    line-height: 1.65;
+}
+
+.cloud-unavailable {
+    border: 1px dashed var(--line);
+}
+
+.cloud-auth-block {
+    margin-top: 18px;
+}
+
+.cloud-auth-block h3,
+.privacy-copy h3 {
+    margin: 0;
+    font-size: 15px;
+}
+
+.cloud-auth-block p,
+.cloud-safety-note p {
+    margin: 6px 0 0;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.6;
+}
+
+.cloud-login-form {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 9px;
+    margin-top: 12px;
+}
+
+.cloud-login-form input,
+.feedback-form input,
+.feedback-form select,
+.feedback-form textarea {
+    width: 100%;
+    border: 1px solid var(--line);
+    border-radius: 13px;
+    color: var(--ink);
+    background: #fff;
+    font: inherit;
+}
+
+.cloud-login-form input,
+.feedback-form input,
+.feedback-form select {
+    min-height: 46px;
+    padding: 0 13px;
+}
+
+.cloud-account-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 13px;
+}
+
+.text-danger {
+    color: #a53a32;
+}
+
+.cloud-safety-note strong {
+    color: var(--ink);
+}
+
+.modal-actions-between {
+    justify-content: space-between;
+    margin-top: 18px;
+}
+
+.feedback-form {
+    display: grid;
+    gap: 15px;
+    margin-top: 22px;
+}
+
+.feedback-form label {
+    display: grid;
+    gap: 6px;
+}
+
+.feedback-form label > span {
+    font-weight: 750;
+}
+
+.feedback-form label > small {
+    color: var(--muted);
+    font-size: 11px;
+    line-height: 1.5;
+}
+
+.feedback-form textarea {
+    min-height: 132px;
+    padding: 12px 13px;
+    resize: vertical;
+    line-height: 1.55;
+}
+
+.feedback-fields-two {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+}
+
+.feedback-form .feedback-consent {
+    display: grid;
+    grid-template-columns: 18px 1fr;
+    align-items: start;
+    gap: 9px;
+    color: var(--muted);
+    font-size: 11px;
+    line-height: 1.55;
+}
+
+.feedback-form .feedback-consent input {
+    width: 16px;
+    min-height: 16px;
+    margin-top: 1px;
+}
+
+.feedback-honeypot {
+    position: absolute;
+    left: -10000px;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+}
+
+.privacy-copy {
+    display: grid;
+    gap: 13px;
+    margin-top: 22px;
+}
+
+.privacy-copy section {
+    padding-bottom: 13px;
+    border-bottom: 1px solid var(--line);
+}
+
+.privacy-copy section:last-child {
+    padding-bottom: 0;
+    border-bottom: 0;
+}
+
+.privacy-copy p {
+    margin: 5px 0 0;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.65;
+}
+
+.floating-feedback {
+    position: fixed;
+    z-index: 45;
+    right: 22px;
+    bottom: 22px;
+    min-height: 42px;
+    padding: 0 17px;
+    border: 1px solid rgba(31, 91, 72, 0.16);
+    border-radius: 999px;
+    color: var(--green-dark);
+    background: rgba(238, 246, 239, 0.94);
+    box-shadow: 0 12px 32px rgba(22, 31, 27, 0.15);
+    font-weight: 750;
+    backdrop-filter: blur(10px);
+}
+
+.floating-feedback:hover {
+    color: #fff;
+    background: var(--green);
+    transform: translateY(-1px);
+}
+
 .data-tools {
     margin-top: 22px;
     padding-top: 20px;
@@ -2503,6 +2765,48 @@ button {
     .book-switch select {
         width: 190px;
         font-size: 12px;
+    }
+
+    .modal {
+        padding: 10px;
+    }
+
+    .modal-card {
+        max-height: calc(100vh - 20px);
+        padding: 22px 18px;
+        border-radius: 22px;
+    }
+
+    .cloud-login-form,
+    .feedback-fields-two {
+        grid-template-columns: 1fr;
+    }
+
+    .cloud-login-form .button {
+        width: 100%;
+    }
+
+    .cloud-account-actions {
+        display: grid;
+    }
+
+    .modal-actions-between {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .floating-feedback {
+        right: 14px;
+        bottom: 14px;
+        min-height: 40px;
+        padding-inline: 14px;
+        font-size: 12px;
+    }
+
+    .toast-region {
+        right: 14px;
+        bottom: 66px;
+        left: 14px;
     }
 
     .hero {
