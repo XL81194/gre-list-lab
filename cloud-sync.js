@@ -353,6 +353,13 @@
         cloud.timer = window.setTimeout(() => synchronize(), 1600);
     }
 
+    function pullLatestProgress() {
+        if (document.visibilityState === "hidden" || !cloud.session || !cloud.ready) {
+            return;
+        }
+        synchronize({ reloadIfChanged: true });
+    }
+
     async function sendMagicLink(email) {
         if (!configured()) {
             toast("云同步还没有完成配置。");
@@ -594,7 +601,7 @@
         } else if (action === "close-privacy") {
             closeModal("privacy");
         } else if (action === "sync-now") {
-            await synchronize({ announce: true });
+            await synchronize({ announce: true, reloadIfChanged: true });
         } else if (action === "sign-out") {
             await signOut();
         } else if (action === "delete-cloud-progress") {
@@ -646,6 +653,15 @@
             return;
         }
         ["cloud-sync", "feedback", "privacy"].forEach(closeModal);
+    });
+
+    window.addEventListener("focus", pullLatestProgress);
+    window.addEventListener("online", pullLatestProgress);
+    window.addEventListener("pageshow", pullLatestProgress);
+    document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible") {
+            pullLatestProgress();
+        }
     });
 
     window.GRE_CLOUD = {
