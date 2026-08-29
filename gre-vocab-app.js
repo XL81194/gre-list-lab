@@ -3,8 +3,12 @@
 
     const STORAGE_KEY = "gre-list-lab-state-v1";
     const CUSTOM_BOOKS_KEY = "gre-list-lab-custom-books-v1";
-    const BACKUP_VERSION = 2;
+    const BACKUP_VERSION = 3;
     const REVIEW_OFFSETS = [0, 1, 3, 7, 14, 29];
+    const SPRINT_REVIEW_OFFSETS = [0, 1, 2, 4, 7];
+    const SPRINT_WORD_INTERVALS = [1, 2, 4, 7];
+    const SPRINT_RECALL_LIMIT_MS = 2500;
+    const SPRINT_EXAM_DATE = "2026-09-06";
     const MAX_INTRA_CYCLES = 12;
     const BATCH_SIZE = 20;
     const MEANING_FLOW_VERSION = 2;
@@ -33,6 +37,12 @@
         mode: "lists",
         listsPerDay: 2,
         wordsPerDay: 100,
+    };
+    const DEFAULT_SPRINT = {
+        enabled: false,
+        examDate: SPRINT_EXAM_DATE,
+        dailyTarget: 300,
+        dailyStats: {},
     };
 
     function loadCustomBooks() {
@@ -65,6 +75,19 @@
     }
     BOOKS.forEach(indexBook);
 
+    const equivalentLookup = new Map();
+    const equivalentBook = BOOKS.find((book) => book.id === EQUIVALENCE_BOOK_ID);
+    allWords(equivalentBook).forEach((word) => {
+        const members = equivalentMembers(word);
+        members.forEach((member) => {
+            const key = member.toLowerCase();
+            equivalentLookup.set(
+                key,
+                [...new Set([...(equivalentLookup.get(key) || []), ...members])]
+            );
+        });
+    });
+
     const ui = {
         calendarMonth: firstOfMonth(new Date()),
         calendarSelectedDate: localDateKey(new Date()),
@@ -91,6 +114,7 @@
             calendarChecks: {},
             savedSession: null,
             plans,
+            sprint: { ...DEFAULT_SPRINT },
         };
     }
 
@@ -117,6 +141,14 @@
                     saved.calendarChecks && typeof saved.calendarChecks === "object"
                         ? saved.calendarChecks
                         : {},
+                sprint: {
+                    ...DEFAULT_SPRINT,
+                    ...(saved.sprint && typeof saved.sprint === "object" ? saved.sprint : {}),
+                    dailyStats:
+                        saved.sprint?.dailyStats && typeof saved.sprint.dailyStats === "object"
+                            ? saved.sprint.dailyStats
+                            : {},
+                },
                 plans: Object.fromEntries(
                     BOOKS.map((book) => [
                         book.id,
@@ -258,6 +290,9 @@
             return;
         }
         session = JSON.parse(JSON.stringify(saved));
+        if (session.isSprint && session.current?.step === "recognition") {
+            session.current.shownAt = Date.now();
+        }
         if (session.studyMode === "meaning" && session.flowVersion !== MEANING_FLOW_VERSION) {
             restartMeaningSessionAsMicroLoop();
             toast("学习流程已升级：本组词将按新的穿插强化方式重新开始。");
@@ -278,6 +313,8 @@
             correctCount: 0,
             lastReviewed: null,
             nextReview: null,
+            firstLearnedAt: null,
+            sprint: null,
         };
     }
 
@@ -297,6 +334,96 @@
             ...value,
         };
         saveState();
+    }
+
+    function isSprintMode() {
+        return Boolean(state.sprint?.enabled);
+    }
+
+    function sprintWordState(progress) {
+        const sprint = progress?.sprint && typeof progress.sprint === "object"
+            ? progress.sprint
+            : {};
+        return {
+            red: Boolean(sprint.red),
+            fuzzyStreak: Number(sprint.fuzzyStreak || 0),
+            fastCorrectStreak: Number(sprint.fastCorrectStreak || 0),
+            lastQuality: sprint.lastQuality || "",
+            lastResponseMs: Number(sprint.lastResponseMs || 0),
+            lastRecognitionAt: sprint.lastRecognitionAt || null,
+            lastReviewDate: sprint.lastReviewDate || null,
+            reviewStage: Number(sprint.reviewStage || 0),
+            lastScheduledDate: sprint.lastScheduledDate || null,
+            redEnteredAt: sprint.redEnteredAt || null,
+            redClearedAt: sprint.redClearedAt || null,
+            ...sprint,
+        };
+    }
+
+    function sprintDailyRecord(dateKey = localDateKey(new Date())) {
+        state.sprint = {
+            ...DEFAULT_SPRINT,
+            ...(state.sprint || {}),
+            dailyStats: { ...(state.sprint?.dailyStats || {}) },
+        };
+        const record = {
+            fastAttempts: 0,
+            fastCorrect: 0,
+            reviews: 0,
+            redCleared: 0,
+            ...(state.sprint.dailyStats[dateKey] || {}),
+        };
+        state.sprint.dailyStats[dateKey] = record;
+        return record;
+    }
+
+    function updateSprintDaily(patch, dateKey = localDateKey(new Date())) {
+        const record = sprintDailyRecord(dateKey);
+        Object.entries(patch || {}).forEach(([key, value]) => {
+            record[key] = Math.max(0, Number(record[key] || 0) + Number(value || 0));
+        });
+        saveState();
+        return record;
+    }
+
+    function sprintRedWords(book) {
+        return allWords(book).filter(
+            (word) => sprintWordState(getProgress(book.id, word.id)).red
+        );
+    }
+
+    function sprintFullStudyDays() {
+        const today = parseLocalDate(localDateKey(new Date()));
+        const exam = parseLocalDate(state.sprint?.examDate || SPRINT_EXAM_DATE);
+        return Math.max(0, Math.ceil((exam - today) / 86400000));
+    }
+
+    function sprintDashboardStats(book) {
+        const today = localDateKey(new Date());
+        const daily = sprintDailyRecord(today);
+        const words = allWords(book);
+        const fuzzy = words.filter(
+            (word) => sprintWordState(getProgress(book.id, word.id)).lastQuality === "good"
+        ).length;
+        const red = sprintRedWords(book).length;
+        const todayNew = words.filter((word) => {
+            const first = getProgress(book.id, word.id).firstLearnedAt;
+            return first && localDateKey(new Date(first)) === today;
+        }).length;
+        return {
+            fullStudyDays: sprintFullStudyDays(),
+            dailyTarget: clamp(state.sprint?.dailyTarget || 300, 50, 1000),
+            todayNew,
+            reviews: Number(daily.reviews || 0),
+            fastAttempts: Number(daily.fastAttempts || 0),
+            fastCorrect: Number(daily.fastCorrect || 0),
+            fastAccuracy: daily.fastAttempts
+                ? Math.round((Number(daily.fastCorrect || 0) / Number(daily.fastAttempts)) * 100)
+                : 0,
+            fuzzy,
+            red,
+            redCleared: Number(daily.redCleared || 0),
+        };
     }
 
     function equivalentMembers(word) {
@@ -483,15 +610,20 @@
         let learned = 0;
         let mastered = 0;
         let due = 0;
+        const today = localDateKey(new Date());
         words.forEach((word) => {
             const progress = getProgress(book.id, word.id);
+            const sprint = sprintWordState(progress);
             if (progress.lastReviewed) {
                 learned += 1;
             }
             if (progress.correctCount >= state.settings.masteryCount) {
                 mastered += 1;
             }
-            if (progress.nextReview && new Date(progress.nextReview).getTime() <= now) {
+            if (
+                (progress.nextReview && new Date(progress.nextReview).getTime() <= now) ||
+                (isSprintMode() && sprint.red && sprint.lastReviewDate !== today)
+            ) {
                 due += 1;
             }
         });
@@ -554,6 +686,7 @@
             ...(state.plans[book.id] || {}),
         };
         const startDate = parseLocalDate(planSettings.startDate);
+        const reviewOffsets = isSprintMode() ? SPRINT_REVIEW_OFFSETS : REVIEW_OFFSETS;
         const tasks = [];
         const scopes = [];
         if (planSettings.mode === "words") {
@@ -585,7 +718,7 @@
             tasks.push(
                 createPlanTask(book, learningDate, "learn", scope, 0, startDate)
             );
-            REVIEW_OFFSETS.forEach((offset) => {
+            reviewOffsets.forEach((offset) => {
                 tasks.push(
                     createPlanTask(
                         book,
@@ -867,8 +1000,42 @@
             .slice(0, 4);
         const savedSession = savedSessionForBook(book);
         const savedRound = savedSession?.studyMode === "meaning"
-            ? "20 词微循环"
+            ? savedSession.isSprint
+                ? "冲刺微循环"
+                : "20 词微循环"
             : "拼写检测";
+        const sprintStats = sprintDashboardStats(book);
+        const sprintPanel = isSprintMode()
+            ? `
+                <section class="sprint-dashboard">
+                    <div class="sprint-dashboard-head">
+                        <div><span class="eyebrow">GRE FINAL SPRINT · 2.5s ACTIVE RECALL</span><h1>考前冲刺仪表盘</h1><p>距离 9 月 6 日考试还有 <strong>${sprintStats.fullStudyDays}</strong> 个完整学习日。核心目标不是“眼熟”，而是2.5秒内主动提取。</p></div>
+                        <button class="button button-sprint-toggle" type="button" data-action="toggle-sprint">退出冲刺模式</button>
+                    </div>
+                    <div class="sprint-target-progress"><span><strong>今日新词 ${sprintStats.todayNew}/${sprintStats.dailyTarget}</strong><small>每次20词微循环，完成后继续下一组</small></span><span class="progress-track"><span style="width:${Math.min(100, Math.round((sprintStats.todayNew / sprintStats.dailyTarget) * 100))}%"></span></span></div>
+                    <div class="sprint-metric-grid">
+                        <div><span>完整学习日</span><strong>${sprintStats.fullStudyDays}</strong><small>考试日 2026-09-06</small></div>
+                        <div><span>今日复习</span><strong>${sprintStats.reviews}</strong><small>含红词复习</small></div>
+                        <div><span>2.5秒正确率</span><strong>${sprintStats.fastAccuracy}%</strong><small>${sprintStats.fastCorrect}/${sprintStats.fastAttempts} 次验证</small></div>
+                        <div><span>当前模糊词</span><strong>${sprintStats.fuzzy}</strong><small>最近一次判断为模糊</small></div>
+                        <div class="is-danger"><span>红词数量</span><strong>${sprintStats.red}</strong><small>退出前每天复习</small></div>
+                        <div><span>今日清除红词</span><strong>${sprintStats.redCleared}</strong><small>连续两次快速正确</small></div>
+                    </div>
+                    <div class="sprint-dashboard-actions">
+                        <button class="button button-primary" type="button" data-action="start-new" data-study-mode="meaning">下一组新词 · ${Math.min(state.settings.dailyNew, stats.newCount)}</button>
+                        <button class="button button-red" type="button" data-action="start-red-review">只刷红词 · ${sprintStats.red}</button>
+                        <button class="button button-soft" type="button" data-action="start-review" data-study-mode="meaning">今日到期复习 · ${stats.due}</button>
+                        <button class="button button-equivalence-entry" type="button" data-action="open-sprint-equivalence">等价词5遍训练</button>
+                        <button class="button button-soft" type="button" data-route="calendar">300词冲刺计划</button>
+                    </div>
+                </section>
+            `
+            : `
+                <section class="sprint-invite">
+                    <div><span class="eyebrow">EXAM · 2026-09-06</span><strong>GRE 考前冲刺模式</strong><p>启用2.5秒主动提取、红词池和0/1/2/4/7天复习；长期模式及现有进度不会被删除。</p></div>
+                    <button class="button button-red" type="button" data-action="toggle-sprint">开启冲刺模式</button>
+                </section>
+            `;
         const todayPlan = todayTasks.length
             ? todayTasks
                   .map(
@@ -883,11 +1050,12 @@
             : `<div class="plan-task"><span class="plan-task-icon">✓</span><span>今天没有固定 List 任务，可处理到期复习。</span></div>`;
 
         target.innerHTML = `
+            ${sprintPanel}
             <div class="hero">
                 <div class="hero-copy">
                     <span class="eyebrow">TODAY · ${escapeHtml(formatLongDate(new Date()))}</span>
                     <h1>今天，把一组难词<br>变成你的词。</h1>
-                    <p>${escapeHtml(book.title)}已按原书顺序分组。学新词、到期复习和自主复习分开进入；每组最多 20 词，模糊或不认识的词会在组内自动多次复现。</p>
+                    <p>${escapeHtml(book.title)}已按原书顺序分组。${isSprintMode() ? "冲刺模式仍按20词微循环推进，每天重复进入直至完成约300词；红词和到期复习单独进入。" : "学新词、到期复习和自主复习分开进入；每组最多 20 词，模糊或不认识的词会在组内自动多次复现。"}</p>
                     <div class="hero-actions">
                         ${
                             savedSession
@@ -901,7 +1069,7 @@
                             到期复习 · ${stats.due}
                         </button>
                         <button class="button button-outline-light" type="button" data-action="open-voluntary-review">自主复习</button>
-                        <button class="button button-outline-light" type="button" data-action="start-review" data-study-mode="spelling">拼写检测</button>
+                        ${isSprintMode() ? `<button class="button button-outline-light" type="button" data-action="start-red-review">只刷红词 · ${sprintStats.red}</button><button class="button button-outline-light" type="button" data-action="open-sprint-equivalence">等价词5遍</button>` : `<button class="button button-outline-light" type="button" data-action="start-review" data-study-mode="spelling">拼写检测</button>`}
                         <button class="button button-outline-light" type="button" data-route="calendar">查看计划日历</button>
                     </div>
                 </div>
@@ -1007,7 +1175,7 @@
                                 <button class="button button-soft" type="button" data-action="open-book-lists" data-book-id="${escapeHtml(book.id)}">查看分组</button>
                                 ${isEquivalentBook(book)
                                     ? `<button class="button button-dark" type="button" data-action="start-equivalence-book" data-book-id="${escapeHtml(book.id)}">进入五遍训练</button><button class="button button-soft" type="button" data-action="start-equivalence-review-book" data-book-id="${escapeHtml(book.id)}">弱项复习</button>`
-                                    : `<button class="button button-dark" type="button" data-action="study-book" data-study-kind="new" data-study-mode="meaning" data-book-id="${escapeHtml(book.id)}">学习新词</button><button class="button button-soft" type="button" data-action="study-book" data-study-kind="review" data-study-mode="meaning" data-book-id="${escapeHtml(book.id)}">到期复习</button><button class="button button-soft" type="button" data-action="open-voluntary-review-book" data-book-id="${escapeHtml(book.id)}">自主复习</button><button class="button button-soft" type="button" data-action="study-book" data-study-kind="review" data-study-mode="spelling" data-book-id="${escapeHtml(book.id)}">练拼写</button>`}
+                                    : `<button class="button button-dark" type="button" data-action="study-book" data-study-kind="new" data-study-mode="meaning" data-book-id="${escapeHtml(book.id)}">学习新词</button><button class="button button-soft" type="button" data-action="study-book" data-study-kind="review" data-study-mode="meaning" data-book-id="${escapeHtml(book.id)}">到期复习</button><button class="button button-soft" type="button" data-action="open-voluntary-review-book" data-book-id="${escapeHtml(book.id)}">自主复习</button>${isSprintMode() ? "" : `<button class="button button-soft" type="button" data-action="study-book" data-study-kind="review" data-study-mode="spelling" data-book-id="${escapeHtml(book.id)}">练拼写</button>`}`}
                             </div>
                         </article>
                     `;
@@ -1050,7 +1218,7 @@
                     <button class="button button-dark" type="button" data-action="start-new" data-study-mode="meaning">学习新词</button>
                     <button class="button button-soft" type="button" data-action="start-review" data-study-mode="meaning">到期复习</button>
                     <button class="button button-soft" type="button" data-action="open-voluntary-review">自主复习</button>
-                    <button class="button button-soft" type="button" data-action="start-review" data-study-mode="spelling">拼写检测</button>
+                    ${isSprintMode() ? `<button class="button button-red" type="button" data-action="start-red-review">只刷红词</button>` : `<button class="button button-soft" type="button" data-action="start-review" data-study-mode="spelling">拼写检测</button>`}
                 </div>
             </div>
             <div class="list-grid">
@@ -1088,7 +1256,7 @@
                                 <div class="list-card-buttons">
                                     <button class="is-primary" type="button" data-action="study-group" data-study-kind="new" data-study-mode="meaning" data-group-id="${escapeHtml(group.id)}">学新词</button>
                                     <button type="button" data-action="open-voluntary-review" data-group-id="${escapeHtml(group.id)}" ${stats.learned ? "" : "disabled"} title="${stats.learned ? "随时复习本组已经学过的词" : "本组还没有已学词"}">自主复习</button>
-                                    <button type="button" data-action="study-group" data-study-kind="review" data-study-mode="spelling" data-group-id="${escapeHtml(group.id)}">拼写</button>
+                                    ${isSprintMode() ? "" : `<button type="button" data-action="study-group" data-study-kind="review" data-study-mode="spelling" data-group-id="${escapeHtml(group.id)}">拼写</button>`}
                                 </div>
                             </div>
                         </article>
@@ -1139,7 +1307,7 @@
                 <div>
                     <span class="eyebrow">FORGETTING CURVE · CHECK-IN</span>
                     <h1 id="calendar-title">专属背词日历</h1>
-                    <p>按原书顺序安排新词，并在当天、+1、+3、+7、+14、+29 天回顾。你可以按每天几个 List 或几个单词制定计划；调整节奏只重排日历，不会清空已经学过的词。预计 ${chunks} 个新学日。</p>
+                    <p>${isSprintMode() ? "冲刺模式按当天、+1、+2、+4、+7 天回顾，红词每天自动进入复习。" : "按原书顺序安排新词，并在当天、+1、+3、+7、+14、+29 天回顾。"}你可以按每天几个 List 或几个单词制定计划；调整节奏只重排日历，不会清空已经学过的词。预计 ${chunks} 个新学日。</p>
                 </div>
             </div>
             <div class="calendar-layout">
@@ -1156,6 +1324,7 @@
                         </div>
                     </div>
                     <div class="plan-builder">
+                        <button class="button button-sprint-preset" type="button" data-action="apply-sprint-plan">冲刺预设 · 300词/天</button>
                         <label>
                             <span>计划方式</span>
                             <select data-field="plan-mode">
@@ -1254,10 +1423,15 @@
 
     function dueWords(book, scopeWords) {
         const now = Date.now();
+        const today = localDateKey(new Date());
         const source = scopeWords || allWords(book);
         return source
             .filter((word) => {
                 const progress = getProgress(book.id, word.id);
+                const sprint = sprintWordState(progress);
+                if (isSprintMode() && sprint.red && sprint.lastReviewDate !== today) {
+                    return true;
+                }
                 return progress.nextReview && new Date(progress.nextReview).getTime() <= now;
             })
             .sort((a, b) => {
@@ -1779,6 +1953,10 @@
                     (word) => !getProgress(book.id, word.id).lastReviewed
                 )
                 .slice(0, groupSize);
+        } else if (mode === "red-review") {
+            candidates = sprintRedWords(book)
+                .filter((word) => scopedWords.some((item) => item.id === word.id))
+                .slice(0, groupSize);
         } else if (mode === "due-review" || mode === "group-review") {
             candidates = dueWords(book, scopedWords).slice(
                 0,
@@ -1816,6 +1994,8 @@
             toast(
                 mode === "voluntary-review"
                     ? "当前范围还没有学过的词，先学一些新词再来复习。"
+                    : mode === "red-review"
+                      ? "当前词书没有红词；保持2.5秒内连续正确即可。"
                     : mode.includes("review")
                       ? "当前范围没有到期复习词。"
                     : "当前范围的新词已经学完了。"
@@ -1825,6 +2005,7 @@
 
         session = {
             bookId: book.id,
+            sessionMode: mode,
             title:
                 mode === "voluntary-review"
                     ? scopedGroups.length
@@ -1834,6 +2015,10 @@
                       ? groupRangeLabel(scopedGroups)
                       : "今日综合任务",
             studyMode: options.studyMode === "spelling" ? "spelling" : "meaning",
+            isSprint:
+                isSprintMode() &&
+                options.studyMode !== "spelling" &&
+                !isEquivalentBook(book),
             isVoluntaryReview: mode === "voluntary-review",
             sourceTaskKey: options.taskKey || null,
             sourceTaskType: options.taskType || null,
@@ -1855,6 +2040,7 @@
             scheduledCount:
                 options.studyMode === "spelling" ? candidates.length : candidates.length,
             completedWordIds: [],
+            reviewedWordIds: [],
             roundResults: {},
             answeredCount: 0,
             totalTarget: candidates.length,
@@ -1941,6 +2127,9 @@
         if (session.stage === "meaning-round-2") {
             session.current.choiceOptions = buildMeaningChoices(sessionBook(), sessionWord());
         }
+        if (session.isSprint && session.stage === "meaning-round-1") {
+            session.current.shownAt = Date.now();
+        }
         persistStudySession();
         renderStudy();
     }
@@ -2004,6 +2193,7 @@
         if (!session.roundResults[wordId]) {
             session.roundResults[wordId] = {
                 recognitionHistory: [],
+                recognitionDetails: [],
                 choiceHistory: [],
                 inputScheduled: false,
             };
@@ -2019,6 +2209,9 @@
             : result.round2
               ? [result.round2]
               : [];
+        result.recognitionDetails = Array.isArray(result.recognitionDetails)
+            ? result.recognitionDetails
+            : [];
         return result;
     }
 
@@ -2065,6 +2258,39 @@
             )
             .filter(Boolean)
             .join("；");
+    }
+
+    function coreChineseMeaning(word) {
+        const meaning = chineseMeaning(word?.meaning);
+        const parts = meaning
+            .split(/[；;，、]/)
+            .map((item) => item.trim())
+            .filter(Boolean);
+        const selected = [...new Set(parts)].slice(0, 3).join("；");
+        return selected || meaning || "释义见原书";
+    }
+
+    function semanticDirection(word) {
+        const meaning = coreChineseMeaning(word);
+        const negative = /恶|坏|讨厌|厌恶|憎|愤怒|悲|哀|痛苦|虚假|欺骗|吝啬|鲁莽|胆怯|阻碍|批评|责备|抱怨|混乱|腐败|残酷|敌意|傲慢|恐惧|焦虑|脆弱|贫乏|减少|削弱|失败|错误|危险|有害|冒犯|恶臭|严厉|冷漠/;
+        const positive = /赞美|表扬|支持|帮助|改善|提高|增强|勇敢|无畏|快乐|愉快|优秀|卓越|真实|坦率|谨慎|平静|镇定|丰富|慷慨|友善|公正|成功|有益|清晰|聪明|智慧|勤奋|忠诚|希望/;
+        if (negative.test(meaning) && !positive.test(meaning)) {
+            return { label: "负向", className: "negative" };
+        }
+        if (positive.test(meaning) && !negative.test(meaning)) {
+            return { label: "正向", className: "positive" };
+        }
+        return { label: "中性", className: "neutral" };
+    }
+
+    function importantEquivalents(word) {
+        const direct = equivalentMembers(word).filter(
+            (member) => member.toLowerCase() !== String(word?.word || "").toLowerCase()
+        );
+        const related = equivalentLookup.get(String(word?.word || "").toLowerCase()) || [];
+        return [...new Set([...direct, ...related])]
+            .filter((member) => member.toLowerCase() !== String(word?.word || "").toLowerCase())
+            .slice(0, 3);
     }
 
     function stableHash(value) {
@@ -2275,7 +2501,7 @@
                         <button class="save-exit-button" type="button" data-action="save-and-leave-study" aria-label="保存进度并退出">← 保存并退出</button>
                         <div>
                             <h1 id="study-title">${escapeHtml(session.title)}</h1>
-                            <p>${escapeHtml(book?.title || "")} · ${session.isVoluntaryReview ? session.studyMode === "spelling" ? "自主复习 · 拼写检测（不改原计划）" : "自主复习 · 快速刷词义（不改原计划）" : session.studyMode === "spelling" ? "进阶拼写检测" : session.studyMode === "equivalence" ? session.isWeakReview ? "25 组微循环 · 到期弱项复习" : `25 组微循环 · 第 ${session.equivalencePass} 遍 ${EQUIVALENCE_PASS_NAMES[session.equivalencePass]}` : `20 词微循环 · ${session.meaningRound === 1 ? "认识判断" : session.meaningRound === 2 ? "英译汉选义" : "中文释义填空"}`}</p>
+                            <p>${escapeHtml(book?.title || "")} · ${session.isVoluntaryReview ? session.studyMode === "spelling" ? "自主复习 · 拼写检测（不改原计划）" : "自主复习 · 快速刷词义（不改原计划）" : session.studyMode === "spelling" ? "进阶拼写检测" : session.studyMode === "equivalence" ? session.isWeakReview ? "25 组微循环 · 到期弱项复习" : `25 组微循环 · 第 ${session.equivalencePass} 遍 ${EQUIVALENCE_PASS_NAMES[session.equivalencePass]}` : session.isSprint ? `冲刺微循环 · ${session.meaningRound === 1 ? "2.5秒主动提取" : session.meaningRound === 2 ? "四选一验证" : "仅高危词中文输入"}` : `20 词微循环 · ${session.meaningRound === 1 ? "认识判断" : session.meaningRound === 2 ? "英译汉选义" : "中文释义填空"}`}</p>
                         </div>
                     </div>
                     <div class="study-progress">
@@ -2436,7 +2662,7 @@
                             <span><strong>${accuracy}%</strong><small>一次通过率</small></span>
                             <span><strong>${session.wrong}</strong><small>错误重排</small></span>
                         </div>
-                        <button class="button button-dark" type="button" data-action="finish-session">返回今日</button>
+                        <div class="feedback-actions"><button class="button button-dark" type="button" data-action="finish-session">返回今日</button>${session.isSprint && ["new", "group-new"].includes(session.sessionMode) ? `<button class="button button-red" type="button" data-action="continue-sprint-new">继续下一组20词</button>` : ""}</div>
                     </div>
                 </div>
             `;
@@ -2446,21 +2672,23 @@
         }
         const context = wordIndex.get(word.id);
         if (session.stage === "meaning-round-1") {
+            const sprintProgress = sprintWordState(getProgress(book.id, word.id));
             return `
                 <div class="study-meta">
                     <span>${escapeHtml(context?.group.label || "")}</span>
-                    <span>${session.current.reinforcement ? "再次确认 · 认识判断" : "步骤 1 · 认识判断"}</span>
+                    <span>${session.isSprint ? `${sprintProgress.red ? "红词 · " : ""}2.5秒主动提取` : session.current.reinforcement ? "再次确认 · 认识判断" : "步骤 1 · 认识判断"}</span>
                 </div>
                 <div class="study-word">${escapeHtml(word.word)}</div>
                 <div class="phonetic">
                     ${word.phonetic ? `[${escapeHtml(word.phonetic)}]` : "按播放键听读音"}
                     <button class="speak-button" type="button" data-action="speak-word" aria-label="朗读单词">◖</button>
                 </div>
-                <p class="study-prompt">先凭第一反应判断；选择后会显示完整词义、用法和例句。</p>
+                ${session.isSprint ? `<div class="sprint-recall-clock" aria-label="2.5秒主动提取计时"><span></span><b>2.5s</b></div>` : ""}
+                <p class="study-prompt">${session.isSprint ? "只有在2.5秒内想起核心词义才选“认识”；只是眼熟必须选“不认识”。" : "先凭第一反应判断；选择后会显示完整词义、用法和例句。"}</p>
                 <div class="rating-row">
-                    <button class="rating-button easy" type="button" data-quality="easy">认识<small>看到单词就知道意思</small></button>
-                    <button class="rating-button good" type="button" data-quality="good">模糊<small>有印象，但不够确定</small></button>
-                    <button class="rating-button hard" type="button" data-quality="wrong">不认识<small>没有想起正确词义</small></button>
+                    <button class="rating-button easy" type="button" data-quality="easy">认识<small>${session.isSprint ? "2.5秒内想起核心义" : "看到单词就知道意思"}</small></button>
+                    <button class="rating-button good" type="button" data-quality="good">模糊<small>${session.isSprint ? "方向大概对，但不确定" : "有印象，但不够确定"}</small></button>
+                    <button class="rating-button hard" type="button" data-quality="wrong">不认识<small>${session.isSprint ? "眼熟、想不起或想错" : "没有想起正确词义"}</small></button>
                 </div>
             `;
         }
@@ -2556,8 +2784,17 @@
             const note = state.notes[word.id] || "";
             const detail = word.example || word.sourceText || word.meaning;
             const icon = result.status === "correct" ? "✓" : result.status === "near" ? "↻" : "!";
-            const primaryMeaning = chineseMeaning(word.meaning);
-            const scheduleText = session.isVoluntaryReview && result.saved
+            const primaryMeaning = session.isSprint
+                ? coreChineseMeaning(word)
+                : chineseMeaning(word.meaning);
+            const direction = semanticDirection(word);
+            const equivalents = importantEquivalents(word);
+            const sprintProgress = sprintWordState(getProgress(book.id, word.id));
+            const scheduleText = session.isSprint && result.degradedByTime
+                ? "超过2.5秒，本次已自动按模糊处理"
+                : session.isSprint && sprintProgress.red
+                  ? "已进入红词池；退出前每天必须复习"
+                  : session.isVoluntaryReview && result.saved
                 ? progress.nextReview
                     ? `自主练习已记录；原计划仍为 ${formatShortDate(progress.nextReview)}`
                     : "自主练习已记录；不会新增或改变到期日期"
@@ -2586,13 +2823,14 @@
                 </div>
                 <div class="feedback">
                     <div class="feedback-meaning-hero">
-                        <span class="eyebrow">中文词义</span>
+                        <span class="eyebrow">${session.isSprint ? "CORE MEANING · 主动提取答案" : "中文词义"}</span>
                         <h2>${escapeHtml(primaryMeaning)}</h2>
                         <p>
                             <strong>${escapeHtml(word.word)}</strong>
                             ${word.phonetic ? `<span>[${escapeHtml(word.phonetic)}]</span>` : ""}
                             <button class="speak-button" type="button" data-action="speak-word" aria-label="朗读单词">◖</button>
                         </p>
+                        ${session.isSprint ? `<div class="sprint-word-signals"><span class="signal-${direction.className}">${direction.label}语义</span><span>${equivalents.length ? `等价词 · ${equivalents.map(escapeHtml).join(" · ")}` : "暂无重点等价词"}</span><span class="${sprintProgress.red ? "is-red-word" : ""}">${sprintProgress.red ? "当前在红词池" : `快速连续正确 ${sprintProgress.fastCorrectStreak}/2`}</span></div>` : ""}
                     </div>
                     <div class="feedback-status">
                         <span><b>${icon}</b>${escapeHtml(result.qualityLabel)}</span>
@@ -2605,9 +2843,9 @@
                                 ? `<div class="answer-cell"><small>微循环进度</small><strong>${session.answeredCount}/${Math.max(session.scheduledCount || 0, session.answeredCount || 0)}</strong></div>`
                                 : `<div class="answer-cell"><small>记忆参数</small><strong>EF ${Number(progress.easeFactor || 1.3).toFixed(2)} · 间隔 ${progress.interval || 1} 天 · 正确 ${progress.correctCount || 0} 次</strong></div>`
                         }
-                        <div class="answer-cell is-wide"><small>原书完整释义</small><strong>${escapeHtml(word.meaning)}</strong></div>
+                        ${session.isSprint ? "" : `<div class="answer-cell is-wide"><small>原书完整释义</small><strong>${escapeHtml(word.meaning)}</strong></div>`}
                     </div>
-                    <div class="source-detail">${escapeHtml(detail)}</div>
+                    ${session.isSprint ? `<details class="sprint-source-detail"><summary>展开完整释义、用法和例句</summary><div><strong>${escapeHtml(word.meaning)}</strong><p>${escapeHtml(detail)}</p></div></details>` : `<div class="source-detail">${escapeHtml(detail)}</div>`}
                     <div class="note-row">
                         <input data-field="word-note" type="text" value="${escapeHtml(note)}" placeholder="写下词根、联想或易混词">
                         <button class="button button-soft" type="button" data-action="save-note">保存笔记</button>
@@ -2663,6 +2901,147 @@
         };
     }
 
+    function scheduleSprintSuccess(progress, quality, now) {
+        const today = localDateKey(now);
+        const sprint = sprintWordState(progress);
+        let reviewStage = clamp(sprint.reviewStage, 0, SPRINT_WORD_INTERVALS.length - 1);
+        let interval = sprint.red ? 1 : SPRINT_WORD_INTERVALS[reviewStage];
+        if (!sprint.red && sprint.lastScheduledDate !== today) {
+            reviewStage = Math.min(reviewStage + 1, SPRINT_WORD_INTERVALS.length - 1);
+        } else if (sprint.lastScheduledDate === today && progress.nextReview) {
+            interval = Math.max(
+                1,
+                Math.round((new Date(progress.nextReview).getTime() - now.getTime()) / 86400000)
+            );
+        }
+        return {
+            ...progress,
+            easeFactor: calculateEaseFactor(
+                progress.easeFactor || INITIAL_EF[quality] || 2.5,
+                quality
+            ),
+            repetitions: Number(progress.repetitions || 0) + 1,
+            interval,
+            intraCycles: 0,
+            correctCount: Number(progress.correctCount || 0) + 1,
+            lastReviewed: now.toISOString(),
+            nextReview: addDays(now, interval).toISOString(),
+            sprint: {
+                ...sprint,
+                reviewStage,
+                lastScheduledDate: today,
+                lastReviewDate: today,
+            },
+        };
+    }
+
+    function scheduleSprintFailure(progress, now) {
+        const sprint = sprintWordState(progress);
+        const today = localDateKey(now);
+        return {
+            ...scheduleFailure(progress, now),
+            sprint: {
+                ...sprint,
+                red: true,
+                fastCorrectStreak: 0,
+                lastQuality: "wrong",
+                lastScheduledDate: today,
+                lastReviewDate: today,
+                redEnteredAt: sprint.redEnteredAt || now.toISOString(),
+            },
+        };
+    }
+
+    function recordSprintRecognition(book, word, quality, responseMs, result) {
+        if (!session?.isSprint || !book || !word) {
+            return;
+        }
+        const now = new Date();
+        const progress = getProgress(book.id, word.id);
+        const sprint = sprintWordState(progress);
+        let red = sprint.red;
+        let fuzzyStreak = quality === "good" ? sprint.fuzzyStreak + 1 : 0;
+        let fastCorrectStreak = sprint.fastCorrectStreak;
+        if (quality === "wrong") {
+            red = true;
+            fastCorrectStreak = 0;
+        } else if (quality === "good") {
+            fastCorrectStreak = 0;
+            if (fuzzyStreak >= 2) {
+                red = true;
+            }
+        }
+        const fastCandidate = quality === "easy" && responseMs <= SPRINT_RECALL_LIMIT_MS;
+        const details = result.recognitionDetails;
+        details.push({
+            quality,
+            responseMs,
+            fastCandidate,
+            verificationConsumed: false,
+        });
+        updateSprintDaily({ fastAttempts: 1 });
+        setProgress(book.id, word.id, {
+            ...progress,
+            sprint: {
+                ...sprint,
+                red,
+                fuzzyStreak,
+                fastCorrectStreak,
+                lastQuality: quality,
+                lastResponseMs: responseMs,
+                lastRecognitionAt: now.toISOString(),
+                redEnteredAt:
+                    red && !sprint.red
+                        ? now.toISOString()
+                        : sprint.redEnteredAt,
+            },
+        });
+    }
+
+    function verifySprintChoice(book, word, correct, result) {
+        if (!session?.isSprint || !book || !word) {
+            return;
+        }
+        const details = result.recognitionDetails || [];
+        const detail = [...details].reverse().find((item) => !item.verificationConsumed);
+        if (detail) {
+            detail.verificationConsumed = true;
+        }
+        const now = new Date();
+        const progress = getProgress(book.id, word.id);
+        const sprint = sprintWordState(progress);
+        let red = sprint.red;
+        let fastCorrectStreak = sprint.fastCorrectStreak;
+        let redClearedAt = sprint.redClearedAt;
+        if (!correct) {
+            red = true;
+            fastCorrectStreak = 0;
+        } else if (detail?.fastCandidate) {
+            fastCorrectStreak += 1;
+            updateSprintDaily({ fastCorrect: 1 });
+            if (red && fastCorrectStreak >= 2) {
+                red = false;
+                redClearedAt = now.toISOString();
+                updateSprintDaily({ redCleared: 1 });
+            }
+        }
+        setProgress(book.id, word.id, {
+            ...progress,
+            sprint: {
+                ...sprint,
+                red,
+                fastCorrectStreak,
+                fuzzyStreak: correct ? sprint.fuzzyStreak : 0,
+                lastQuality: correct ? sprint.lastQuality : "wrong",
+                redEnteredAt:
+                    red && !sprint.red
+                        ? now.toISOString()
+                        : sprint.redEnteredAt,
+                redClearedAt,
+            },
+        });
+    }
+
     function adjustIntra(progress, quality) {
         return {
             ...progress,
@@ -2695,6 +3074,19 @@
         if (!session || session.stage !== "meaning-round-1") {
             return;
         }
+        const requestedQuality = quality;
+        const responseMs = Math.max(
+            0,
+            Date.now() - Number(session.current?.shownAt || Date.now())
+        );
+        if (
+            session.isSprint &&
+            quality === "easy" &&
+            responseMs > SPRINT_RECALL_LIMIT_MS
+        ) {
+            quality = "good";
+            toast("考试要求快速提取，本次按模糊处理");
+        }
         const labels = {
             easy: "认识",
             good: "模糊",
@@ -2704,9 +3096,77 @@
         const result = meaningResultFor(word.id);
         result.round1 = quality;
         result.recognitionHistory.push(quality);
+        recordSprintRecognition(sessionBook(), word, quality, responseMs, result);
         const attempt = result.recognitionHistory.length;
         let reinforcementScheduled = false;
-        if (attempt === 1) {
+        if (session.isSprint && attempt === 1) {
+            if (quality === "easy") {
+                queueMeaningStep(word.id, "choice", 4, { attempt: 1 });
+                queueMeaningStep(
+                    word.id,
+                    "recognition",
+                    14 + (stableHash(word.id) % 7),
+                    { attempt: 2, reinforcement: true }
+                );
+            } else if (quality === "good") {
+                queueMeaningStep(word.id, "choice", 4, {
+                    attempt: 1,
+                    reinforcement: true,
+                });
+                queueMeaningStep(word.id, "recognition", 8, {
+                    attempt: 2,
+                    reinforcement: true,
+                });
+                queueMeaningStep(word.id, "recognition", 20, {
+                    attempt: 3,
+                    reinforcement: true,
+                });
+            } else {
+                queueMeaningStep(word.id, "recognition", 3, {
+                    attempt: 2,
+                    reinforcement: true,
+                });
+                queueMeaningStep(word.id, "choice", 5, {
+                    attempt: 1,
+                    reinforcement: true,
+                });
+                queueMeaningStep(word.id, "recognition", 10, {
+                    attempt: 3,
+                    reinforcement: true,
+                });
+                queueMeaningStep(word.id, "recognition", 20, {
+                    attempt: 4,
+                    reinforcement: true,
+                });
+            }
+            reinforcementScheduled = true;
+        } else if (
+            session.isSprint &&
+            quality === "easy" &&
+            sprintWordState(getProgress(session.bookId, word.id)).red
+        ) {
+            const hasPendingChoice = session.activeQueue.some(
+                (item) => item.wordId === word.id && item.step === "choice"
+            );
+            if (!hasPendingChoice) {
+                queueMeaningStep(word.id, "choice", 3, {
+                    attempt: result.choiceHistory.length + 1,
+                    reinforcement: true,
+                });
+            }
+            reinforcementScheduled = true;
+        } else if (session.isSprint && quality !== "easy") {
+            const pendingChoices = session.activeQueue.filter(
+                (item) => item.wordId === word.id && item.step === "choice"
+            ).length;
+            if (result.choiceHistory.length + pendingChoices < 2) {
+                queueMeaningStep(word.id, "choice", quality === "wrong" ? 3 : 5, {
+                    attempt: result.choiceHistory.length + pendingChoices + 1,
+                    reinforcement: true,
+                });
+            }
+            reinforcementScheduled = true;
+        } else if (attempt === 1) {
             if (quality === "easy") {
                 queueMeaningStep(word.id, "choice", 4, { attempt: 1 });
             } else if (quality === "good") {
@@ -2770,6 +3230,8 @@
             reinforcementScheduled,
             saved: false,
             verification: false,
+            responseMs,
+            degradedByTime: requestedQuality === "easy" && quality === "good",
         };
         session.stage = "feedback";
         persistStudySession();
@@ -2792,6 +3254,58 @@
         result.choiceHistory.push(correct ? "correct" : "wrong");
         const choiceAttempts = result.choiceHistory.length;
         let reinforcementScheduled = false;
+        if (session.isSprint) {
+            verifySprintChoice(sessionBook(), word, correct, result);
+            if (correct) {
+                const quality = overallMeaningQuality(word.id, "correct");
+                applyStudyResult({
+                    skipped: false,
+                    typed: selected.meaning,
+                    directQuality: quality,
+                    resultMode: "meaning-choice",
+                    forceSave: true,
+                    qualityLabelOverride:
+                        quality === "easy" ? "2.5秒内提取正确" : "主动提取已验证",
+                });
+                return;
+            }
+            if (choiceAttempts < 2) {
+                queueMeaningStep(word.id, "recognition", 3, {
+                    attempt: result.recognitionHistory.length + 1,
+                    reinforcement: true,
+                });
+                queueMeaningStep(word.id, "choice", 6, {
+                    attempt: choiceAttempts + 1,
+                    reinforcement: true,
+                });
+                reinforcementScheduled = true;
+            } else if (!result.inputScheduled) {
+                queueMeaningStep(word.id, "input", 5, {
+                    attempt: 1,
+                    reinforcement: true,
+                });
+                result.inputScheduled = true;
+                reinforcementScheduled = true;
+            }
+            session.answeredCount += 1;
+            session.lastResult = {
+                status: "wrong",
+                quality: "wrong",
+                qualityLabel:
+                    choiceAttempts >= 2 ? "连续两次选义错误" : "选择错误 · 已进入红词",
+                typed: selected.meaning,
+                mode: "meaning-choice",
+                roundOnly: true,
+                round: 2,
+                reinforcementScheduled,
+                saved: false,
+                verification: false,
+            };
+            session.stage = "feedback";
+            persistStudySession();
+            renderStudy();
+            return;
+        }
         const pendingChoiceCount = session.activeQueue.filter(
             (item) => item.wordId === word.id && item.step === "choice"
         ).length;
@@ -2987,8 +3501,12 @@
                 nextProgress.easeFactor || INITIAL_EF[quality] || 1.3;
             nextProgress =
                 quality === "wrong"
-                    ? scheduleFailure(nextProgress, now)
-                    : scheduleSuccess(nextProgress, quality, now);
+                    ? session.isSprint
+                        ? scheduleSprintFailure(nextProgress, now)
+                        : scheduleFailure(nextProgress, now)
+                    : session.isSprint
+                      ? scheduleSprintSuccess(nextProgress, quality, now)
+                      : scheduleSuccess(nextProgress, quality, now);
             saved = true;
         } else if (isNew) {
             nextProgress.easeFactor = INITIAL_EF[quality] || 1.3;
@@ -3051,6 +3569,26 @@
                     voluntaryReviewLast: now.toISOString(),
                     voluntaryReviewLastQuality: quality,
                 };
+            }
+            if (session.isSprint) {
+                const sprint = sprintWordState(nextProgress);
+                nextProgress = {
+                    ...nextProgress,
+                    firstLearnedAt:
+                        nextProgress.firstLearnedAt ||
+                        (isNew ? now.toISOString() : base.firstLearnedAt || null),
+                    sprint: {
+                        ...sprint,
+                        lastReviewDate: localDateKey(now),
+                    },
+                };
+                session.reviewedWordIds = Array.isArray(session.reviewedWordIds)
+                    ? session.reviewedWordIds
+                    : [];
+                if (!isNew && !session.reviewedWordIds.includes(word.id)) {
+                    session.reviewedWordIds.push(word.id);
+                    updateSprintDaily({ reviews: 1 });
+                }
             }
             setProgress(book.id, word.id, nextProgress);
             session.completedWordIds = Array.isArray(session.completedWordIds)
@@ -3535,6 +4073,14 @@
                 ...imported,
                 route: "dashboard",
                 settings: { ...DEFAULT_SETTINGS, ...(imported.settings || {}) },
+                sprint: {
+                    ...DEFAULT_SPRINT,
+                    ...(imported.sprint || {}),
+                    dailyStats:
+                        imported.sprint?.dailyStats && typeof imported.sprint.dailyStats === "object"
+                            ? imported.sprint.dailyStats
+                            : {},
+                },
                 plans: Object.fromEntries(
                     BOOKS.map((book) => [
                         book.id,
@@ -3581,6 +4127,43 @@
         const action = trigger.dataset.action;
         if (action === "mobile-menu") {
             document.body.classList.toggle("mobile-nav-open");
+        } else if (action === "toggle-sprint") {
+            state.sprint = {
+                ...DEFAULT_SPRINT,
+                ...(state.sprint || {}),
+                enabled: !isSprintMode(),
+            };
+            saveState();
+            render();
+            toast(
+                isSprintMode()
+                    ? "冲刺模式已开启：2.5秒提取、红词池和考前复习节奏生效。"
+                    : "已返回长期学习模式，全部冲刺记录和旧进度仍然保留。"
+            );
+        } else if (action === "start-red-review") {
+            startStudy({ mode: "red-review", studyMode: "meaning" });
+        } else if (action === "open-sprint-equivalence") {
+            selectBook(EQUIVALENCE_BOOK_ID, "dashboard");
+        } else if (action === "apply-sprint-plan") {
+            const book = currentBook();
+            if (book && !isEquivalentBook(book)) {
+                state.sprint = {
+                    ...DEFAULT_SPRINT,
+                    ...(state.sprint || {}),
+                    enabled: true,
+                    dailyTarget: 300,
+                };
+                state.plans[book.id] = {
+                    ...DEFAULT_PLAN,
+                    ...(state.plans[book.id] || {}),
+                    startDate: localDateKey(new Date()),
+                    mode: "words",
+                    wordsPerDay: 300,
+                };
+                saveState();
+                renderCalendar();
+                toast("已启用300词/天冲刺预设；已有学习进度保持不变。 ");
+            }
         } else if (action === "open-settings") {
             openSettings();
         } else if (action === "close-settings") {
@@ -3726,6 +4309,10 @@
             session = null;
             clearSavedSession();
             navigate("dashboard");
+        } else if (action === "continue-sprint-new") {
+            session = null;
+            clearSavedSession();
+            startStudy({ mode: "new", studyMode: "meaning" });
         } else if (action === "save-note") {
             const word = sessionWord();
             const input = document.querySelector('[data-field="word-note"]');
