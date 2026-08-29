@@ -411,12 +411,22 @@
         return JSON.stringify(comparable);
     }
 
-    async function synchronize({ reloadIfChanged = false, announce = false } = {}) {
+    async function synchronize({
+        reloadIfChanged = false,
+        announce = false,
+        queueIfBusy = false,
+    } = {}) {
         if (!cloud.client || !cloud.session) {
             return false;
         }
         if (cloud.syncing) {
-            cloud.resyncRequested = true;
+            // Only a local study save needs a guaranteed follow-up upload.
+            // Focus/pageshow/auth/poll events are read checks and may fire in a
+            // burst; queuing all of them can keep the app syncing forever when a
+            // request lasts longer than the polling interval.
+            if (queueIfBusy) {
+                cloud.resyncRequested = true;
+            }
             return false;
         }
         cloud.syncing = true;
@@ -492,11 +502,16 @@
             return;
         }
         window.clearTimeout(cloud.timer);
-        cloud.timer = window.setTimeout(() => synchronize(), 1600);
+        cloud.timer = window.setTimeout(() => synchronize({ queueIfBusy: true }), 1600);
     }
 
     function pullLatestProgress() {
-        if (document.visibilityState === "hidden" || !cloud.session || !cloud.ready) {
+        if (
+            document.visibilityState === "hidden" ||
+            !cloud.session ||
+            !cloud.ready ||
+            cloud.syncing
+        ) {
             return;
         }
         synchronize({ reloadIfChanged: true });

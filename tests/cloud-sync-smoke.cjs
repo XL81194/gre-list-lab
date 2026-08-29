@@ -44,6 +44,16 @@ const context = vm.createContext({
 });
 
 let source = fs.readFileSync(path.join(root, "cloud-sync.js"), "utf8");
+assert.match(
+    source,
+    /synchronize\(\{ queueIfBusy: true \}\)/,
+    "本地学习保存必须在同步忙碌时安排一次补传"
+);
+assert.match(
+    source,
+    /!cloud\.ready \|\|\s*cloud\.syncing/,
+    "前台轮询必须在已有同步进行时跳过，避免形成永久同步队列"
+);
 const tail = /\s*initialize\(\);\s*\}\)\(window, document\);\s*$/;
 assert.match(source, tail, "同步脚本入口结构发生变化，测试挂钩无法注入");
 source = source.replace(
@@ -215,4 +225,4 @@ assert.equal(
     "冲刺识别时间必须参与单词级新旧判断"
 );
 
-console.log("Cloud sync smoke checks passed: lossless merge, sprint timestamps, and no timestamp refresh loop.");
+console.log("Cloud sync smoke checks passed: lossless merge, no timestamp refresh loop, and no polling queue loop.");
