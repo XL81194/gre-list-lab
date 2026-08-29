@@ -167,6 +167,7 @@
 
     function saveState() {
         try {
+            state.updatedAt = new Date().toISOString();
             window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
             window.dispatchEvent(new CustomEvent("gre:state-saved"));
         } catch (error) {

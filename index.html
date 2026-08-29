@@ -214,7 +214,7 @@
                 <div data-cloud-configured hidden>
                     <div class="cloud-auth-block" data-cloud-signed-out>
                         <h3>在手机、电脑间同步</h3>
-                        <p>输入邮箱，我们会发送一次性登录链接，不需要设置密码。</p>
+                        <p>每台设备都要分别使用同一个邮箱登录。请在当前学习所用的浏览器中打开该设备收到的最新链接；一次性链接不能转发给另一台设备或重复使用。</p>
                         <form id="cloud-login-form" class="cloud-login-form">
                             <input name="email" type="email" autocomplete="email" placeholder="你的邮箱" required>
                             <button class="button button-primary" type="submit" data-requires-cloud>发送登录链接</button>
@@ -223,6 +223,7 @@
                     <div class="cloud-auth-block" data-cloud-signed-in hidden>
                         <h3>已开启云同步</h3>
                         <p>登录邮箱：<strong data-cloud-email>未登录</strong></p>
+                        <p class="cloud-device-note">看到这里的邮箱完全一致，才表示这台设备已进入同一个云端账号。学习后会自动上传，前台每15秒检查其他设备的新进度。</p>
                         <div class="cloud-account-actions">
                             <button class="button button-primary" type="button" data-cloud-action="sync-now">立即同步</button>
                             <button class="button button-soft" type="button" data-cloud-action="sign-out">退出云同步</button>
@@ -286,8 +287,8 @@
 
         <script src="books.js"></script>
         <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-        <script src="supabase-config.js"></script>
+        <script src="supabase-config.js?v=20260829-sync2"></script>
         <script src="gre-vocab-app.js?v=20260829-sprint"></script>
-        <script src="cloud-sync.js"></script>
+        <script src="cloud-sync.js?v=20260829-sync2"></script>
     </body>
 </html>

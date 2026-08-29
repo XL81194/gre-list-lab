@@ -10,8 +10,11 @@
         session: null,
         ready: false,
         syncing: false,
+        resyncRequested: false,
         timer: null,
+        pollTimer: null,
         status: "local",
+        lastError: "",
     };
 
     function configured() {
@@ -135,6 +138,10 @@
         const values = [
             progress?.lastReviewed,
             progress?.voluntaryReviewLast,
+            progress?.firstLearnedAt,
+            progress?.sprint?.lastRecognitionAt,
+            progress?.sprint?.redEnteredAt,
+            progress?.sprint?.redClearedAt,
             ...Object.values(progress?.equivalence?.passes || {}).flatMap((record) => [
                 record?.lastAnsweredAt,
                 record?.completedAt,
@@ -156,6 +163,77 @@
             result[key] = Math.max(Number(result[key] || 0), Number(value || 0));
         });
         return result;
+    }
+
+    function timestamp(value) {
+        const time = new Date(value || 0).getTime();
+        return Number.isFinite(time) ? time : 0;
+    }
+
+    function earlierDate(first, second) {
+        if (!first) {
+            return second || null;
+        }
+        if (!second) {
+            return first;
+        }
+        return timestamp(first) <= timestamp(second) ? first : second;
+    }
+
+    function laterDate(first, second) {
+        if (!first) {
+            return second || null;
+        }
+        if (!second) {
+            return first;
+        }
+        return timestamp(first) >= timestamp(second) ? first : second;
+    }
+
+    function mergeDailyStats(localStats, remoteStats) {
+        const result = {};
+        const dates = new Set([
+            ...Object.keys(localStats || {}),
+            ...Object.keys(remoteStats || {}),
+        ]);
+        dates.forEach((date) => {
+            const local = localStats?.[date] || {};
+            const remote = remoteStats?.[date] || {};
+            result[date] = {
+                ...remote,
+                ...local,
+                fastAttempts: Math.max(
+                    Number(local.fastAttempts || 0),
+                    Number(remote.fastAttempts || 0)
+                ),
+                fastCorrect: Math.max(
+                    Number(local.fastCorrect || 0),
+                    Number(remote.fastCorrect || 0)
+                ),
+                reviews: Math.max(
+                    Number(local.reviews || 0),
+                    Number(remote.reviews || 0)
+                ),
+                redCleared: Math.max(
+                    Number(local.redCleared || 0),
+                    Number(remote.redCleared || 0)
+                ),
+            };
+        });
+        return result;
+    }
+
+    function mergeSprint(localSprint, remoteSprint, preferLocal) {
+        const primary = preferLocal ? localSprint || {} : remoteSprint || {};
+        const secondary = preferLocal ? remoteSprint || {} : localSprint || {};
+        return {
+            ...secondary,
+            ...primary,
+            dailyStats: mergeDailyStats(
+                localSprint?.dailyStats,
+                remoteSprint?.dailyStats
+            ),
+        };
     }
 
     function mergeEquivalence(localEq, remoteEq, preferLocal) {
@@ -216,6 +294,10 @@
         return {
             ...secondary,
             ...primary,
+            firstLearnedAt: earlierDate(
+                localProgress.firstLearnedAt,
+                remoteProgress.firstLearnedAt
+            ),
             correctCount: Math.max(
                 Number(localProgress.correctCount || 0),
                 Number(remoteProgress.correctCount || 0)
@@ -233,6 +315,14 @@
                 remoteProgress.equivalence,
                 preferLocal
             ),
+            sprint: {
+                ...(preferLocal
+                    ? remoteProgress.sprint || {}
+                    : localProgress.sprint || {}),
+                ...(preferLocal
+                    ? localProgress.sprint || {}
+                    : remoteProgress.sprint || {}),
+            },
         };
     }
 
@@ -266,33 +356,60 @@
         return result;
     }
 
-    function mergeStates(localState, remoteState) {
+    function mergeStates(localState, remoteState, remoteUpdatedAt = null) {
         if (!localState) {
             return remoteState;
         }
         if (!remoteState) {
             return localState;
         }
+        const localTime = timestamp(localState.updatedAt);
+        const remoteTime = Math.max(
+            timestamp(remoteState.updatedAt),
+            timestamp(remoteUpdatedAt)
+        );
+        const preferLocal = localTime >= remoteTime;
+        const primary = preferLocal ? localState : remoteState;
+        const secondary = preferLocal ? remoteState : localState;
         return {
-            ...remoteState,
-            ...localState,
+            ...secondary,
+            ...primary,
             version: Math.max(Number(localState.version || 1), Number(remoteState.version || 1)),
             route: "dashboard",
-            settings: { ...(remoteState.settings || {}), ...(localState.settings || {}) },
-            plans: { ...(remoteState.plans || {}), ...(localState.plans || {}) },
-            notes: { ...(remoteState.notes || {}), ...(localState.notes || {}) },
+            updatedAt: laterDate(
+                laterDate(localState.updatedAt, remoteState.updatedAt),
+                remoteUpdatedAt
+            ),
+            settings: {
+                ...(secondary.settings || {}),
+                ...(primary.settings || {}),
+            },
+            plans: {
+                ...(secondary.plans || {}),
+                ...(primary.plans || {}),
+            },
+            notes: {
+                ...(secondary.notes || {}),
+                ...(primary.notes || {}),
+            },
             progress: mergeProgress(localState.progress, remoteState.progress),
             calendarChecks: mergeChecks(localState.calendarChecks, remoteState.calendarChecks),
-            savedSession: localState.savedSession || remoteState.savedSession || null,
+            sprint: mergeSprint(localState.sprint, remoteState.sprint, preferLocal),
+            savedSession: primary.savedSession || secondary.savedSession || null,
         };
     }
 
     async function synchronize({ reloadIfChanged = false, announce = false } = {}) {
-        if (!cloud.client || !cloud.session || cloud.syncing) {
+        if (!cloud.client || !cloud.session) {
+            return false;
+        }
+        if (cloud.syncing) {
+            cloud.resyncRequested = true;
             return false;
         }
         cloud.syncing = true;
         cloud.status = "syncing";
+        cloud.lastError = "";
         renderCloudStatus();
         try {
             const userId = cloud.session.user.id;
@@ -305,23 +422,30 @@
             if (error) {
                 throw error;
             }
-            const merged = mergeStates(localState, data?.state || null);
+            const merged = mergeStates(
+                localState,
+                data?.state || null,
+                data?.updated_at || null
+            );
             const localSerialized = JSON.stringify(localState || {});
             const mergedSerialized = JSON.stringify(merged || {});
+            const remoteSerialized = JSON.stringify(data?.state || {});
             if (merged && mergedSerialized !== localSerialized) {
                 window.localStorage.setItem(STORAGE_KEY, mergedSerialized);
             }
-            const { error: saveError } = await cloud.client.from("user_progress").upsert(
-                {
-                    user_id: userId,
-                    state: merged || {},
-                    client_updated_at: new Date().toISOString(),
-                    updated_at: new Date().toISOString(),
-                },
-                { onConflict: "user_id" }
-            );
-            if (saveError) {
-                throw saveError;
+            if (!data || mergedSerialized !== remoteSerialized) {
+                const { error: saveError } = await cloud.client.from("user_progress").upsert(
+                    {
+                        user_id: userId,
+                        state: merged || {},
+                        client_updated_at: new Date().toISOString(),
+                        updated_at: new Date().toISOString(),
+                    },
+                    { onConflict: "user_id" }
+                );
+                if (saveError) {
+                    throw saveError;
+                }
             }
             updateCloudMeta({ lastSyncedAt: new Date().toISOString() });
             cloud.status = "synced";
@@ -335,6 +459,7 @@
         } catch (error) {
             console.warn("[GRE List Lab] 云同步失败", error);
             cloud.status = "error";
+            cloud.lastError = String(error?.message || error || "未知错误");
             if (announce) {
                 toast("云端暂时没有同步成功，本机进度仍已安全保存。");
             }
@@ -342,6 +467,10 @@
         } finally {
             cloud.syncing = false;
             renderCloudStatus();
+            if (cloud.resyncRequested) {
+                cloud.resyncRequested = false;
+                window.setTimeout(() => synchronize({ reloadIfChanged: true }), 0);
+            }
         }
     }
 
@@ -358,6 +487,15 @@
             return;
         }
         synchronize({ reloadIfChanged: true });
+    }
+
+    function startForegroundPolling() {
+        window.clearInterval(cloud.pollTimer);
+        cloud.pollTimer = window.setInterval(() => {
+            if (document.visibilityState === "visible") {
+                pullLatestProgress();
+            }
+        }, 15000);
     }
 
     async function sendMagicLink(email) {
@@ -577,6 +715,7 @@
         if (cloud.session) {
             await synchronize({ reloadIfChanged: true });
         }
+        startForegroundPolling();
         await flushFeedbackQueue();
     }
 
@@ -666,7 +805,13 @@
 
     window.GRE_CLOUD = {
         synchronize,
-        getStatus: () => ({ configured: configured(), session: cloud.session, status: cloud.status }),
+        getStatus: () => ({
+            configured: configured(),
+            signedIn: Boolean(cloud.session),
+            status: cloud.status,
+            lastError: cloud.lastError,
+            lastSyncedAt: cloudMeta().lastSyncedAt || null,
+        }),
     };
 
     initialize();
