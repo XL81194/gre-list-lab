@@ -475,8 +475,11 @@
             if (announce) {
                 toast("学习进度已同步到云端。");
             }
-            if (reloadIfChanged && learningContentChanged) {
-                window.setTimeout(() => window.location.reload(), 250);
+            if (learningContentChanged) {
+                // Update the in-memory app without reloading the document. A full
+                // reload can re-trigger auth, pageshow and polling events and was
+                // the final route by which slow devices could enter a refresh loop.
+                window.dispatchEvent(new CustomEvent("gre:cloud-state-updated"));
             }
             return true;
         } catch (error) {

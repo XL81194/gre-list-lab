@@ -44,6 +44,16 @@ const context = vm.createContext({
 });
 
 let source = fs.readFileSync(path.join(root, "cloud-sync.js"), "utf8");
+assert.doesNotMatch(
+    source,
+    /window\.location\.reload|location\.reload/,
+    "云同步不应通过整页刷新应用远端状态"
+);
+assert.match(
+    source,
+    /gre:cloud-state-updated/,
+    "远端状态变化应通过页面内事件通知应用更新"
+);
 assert.match(
     source,
     /synchronize\(\{ queueIfBusy: true \}\)/,
@@ -225,4 +235,4 @@ assert.equal(
     "冲刺识别时间必须参与单词级新旧判断"
 );
 
-console.log("Cloud sync smoke checks passed: lossless merge, no timestamp refresh loop, and no polling queue loop.");
+console.log("Cloud sync smoke checks passed: lossless merge, no page refresh, and no polling queue loop.");

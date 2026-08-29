@@ -4526,6 +4526,17 @@
         }
     });
 
+    window.addEventListener("gre:cloud-state-updated", () => {
+        // Do not interrupt an active study card. The merged state is already safe
+        // in localStorage and will be picked up after the session. On dashboards
+        // and lists, reload the state in memory and redraw without a page refresh.
+        if (session && state.route === "study") {
+            return;
+        }
+        state = loadState();
+        render();
+    });
+
     migrateEquivalentProgress();
     render();
 })(window, document);
