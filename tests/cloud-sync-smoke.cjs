@@ -55,6 +55,7 @@ source = source.replace(
         mergeProgress,
         mergeStates,
         mergeSprint,
+        stateContent,
     };
 })(window, document);
 `
@@ -147,6 +148,53 @@ assert.equal(merged.progress.gre3000.shared.correctCount, 3);
 assert.equal(merged.sprint.dailyStats["2026-08-29"].fastAttempts, 8);
 assert.equal(merged.sprint.dailyStats["2026-08-29"].reviews, 2);
 
+const identicalLocal = {
+    version: 3,
+    route: "dashboard",
+    updatedAt: "2026-08-29T10:00:00.000Z",
+    progress: { gre3000: { word1: { correctCount: 2 } } },
+};
+const identicalRemote = JSON.parse(JSON.stringify(identicalLocal));
+const normalizedIdentical = api.mergeStates(
+    identicalLocal,
+    identicalRemote,
+    "2026-08-29T10:00:00.000Z"
+);
+const mergedWithNewerRowTime = api.mergeStates(
+    normalizedIdentical,
+    normalizedIdentical,
+    "2026-08-29T10:05:00.000Z"
+);
+assert.equal(
+    mergedWithNewerRowTime.updatedAt,
+    normalizedIdentical.updatedAt,
+    "数据库行更新时间不能写回学习状态，否则会形成同步刷新循环"
+);
+assert.equal(
+    JSON.stringify(mergedWithNewerRowTime),
+    JSON.stringify(normalizedIdentical),
+    "相同学习状态不应仅因数据库更新时间变化而再次上传"
+);
+
+const timestampOnlyChange = {
+    ...identicalLocal,
+    updatedAt: "2026-08-29T10:06:00.000Z",
+};
+assert.equal(
+    api.stateContent(timestampOnlyChange),
+    api.stateContent(identicalLocal),
+    "仅同步元数据变化时不应刷新页面"
+);
+const realProgressChange = {
+    ...identicalLocal,
+    progress: { gre3000: { word1: { correctCount: 3 } } },
+};
+assert.notEqual(
+    api.stateContent(realProgressChange),
+    api.stateContent(identicalLocal),
+    "真实学习进度变化必须触发界面更新"
+);
+
 const sprintOnlyLocal = {
     lastReviewed: "2026-08-20T00:00:00.000Z",
     sprint: {
@@ -167,4 +215,4 @@ assert.equal(
     "冲刺识别时间必须参与单词级新旧判断"
 );
 
-console.log("Cloud sync smoke checks passed: lossless merge, sprint timestamps, newer state selection.");
+console.log("Cloud sync smoke checks passed: lossless merge, sprint timestamps, and no timestamp refresh loop.");

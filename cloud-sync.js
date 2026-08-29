@@ -364,10 +364,12 @@
             return localState;
         }
         const localTime = timestamp(localState.updatedAt);
-        const remoteTime = Math.max(
-            timestamp(remoteState.updatedAt),
-            timestamp(remoteUpdatedAt)
-        );
+        // `updated_at` belongs to the database row, not to the study state. Every
+        // upsert changes it, so copying it back into state.updatedAt creates a
+        // write -> newer row timestamp -> reload -> write loop. Only use it as a
+        // compatibility fallback for old cloud states that have no own timestamp.
+        const remoteStateTime = timestamp(remoteState.updatedAt);
+        const remoteTime = remoteStateTime || timestamp(remoteUpdatedAt);
         const preferLocal = localTime >= remoteTime;
         const primary = preferLocal ? localState : remoteState;
         const secondary = preferLocal ? remoteState : localState;
@@ -376,10 +378,7 @@
             ...primary,
             version: Math.max(Number(localState.version || 1), Number(remoteState.version || 1)),
             route: "dashboard",
-            updatedAt: laterDate(
-                laterDate(localState.updatedAt, remoteState.updatedAt),
-                remoteUpdatedAt
-            ),
+            updatedAt: laterDate(localState.updatedAt, remoteState.updatedAt),
             settings: {
                 ...(secondary.settings || {}),
                 ...(primary.settings || {}),
@@ -397,6 +396,19 @@
             sprint: mergeSprint(localState.sprint, remoteState.sprint, preferLocal),
             savedSession: primary.savedSession || secondary.savedSession || null,
         };
+    }
+
+    function stateContent(state) {
+        if (!state) {
+            return "{}";
+        }
+        const comparable = { ...state };
+        // These fields do not change what the user sees after a reload. Excluding
+        // them prevents a harmless timestamp or route normalization from causing
+        // a refresh, while the full state is still saved locally and remotely.
+        delete comparable.updatedAt;
+        delete comparable.route;
+        return JSON.stringify(comparable);
     }
 
     async function synchronize({ reloadIfChanged = false, announce = false } = {}) {
@@ -430,6 +442,7 @@
             const localSerialized = JSON.stringify(localState || {});
             const mergedSerialized = JSON.stringify(merged || {});
             const remoteSerialized = JSON.stringify(data?.state || {});
+            const learningContentChanged = stateContent(localState) !== stateContent(merged);
             if (merged && mergedSerialized !== localSerialized) {
                 window.localStorage.setItem(STORAGE_KEY, mergedSerialized);
             }
@@ -452,7 +465,7 @@
             if (announce) {
                 toast("学习进度已同步到云端。");
             }
-            if (reloadIfChanged && mergedSerialized !== localSerialized) {
+            if (reloadIfChanged && learningContentChanged) {
                 window.setTimeout(() => window.location.reload(), 250);
             }
             return true;
