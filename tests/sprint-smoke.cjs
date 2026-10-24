@@ -266,4 +266,14 @@ assert.equal(
     "中途退出后应从最后完成词的下一词继续"
 );
 
+delete loaded.voluntaryReviewCursors[cursorKey];
+reviewWords.slice(0, 20).forEach((reviewWord) => {
+    loaded.progress[book.id][reviewWord.id].voluntaryReviewCount = 2;
+});
+assert.equal(
+    api.voluntaryReviewWords(book, reviewWords, "sequential", cursorKey)[0].id,
+    orderedIds[20],
+    "升级前已复习过前20词时，应从复习次数更少的第21词开始"
+);
+
 console.log("Sprint smoke checks passed: legacy state, sprint rules, and sequential List review cursor.");

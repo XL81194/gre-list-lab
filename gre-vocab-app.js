@@ -1454,8 +1454,8 @@
         return `${bookId}:${scope}`;
     }
 
-    function voluntaryReviewStartIndex(cursorKey, learnedWords) {
-        if (!cursorKey || !learnedWords.length) {
+    function voluntaryReviewStartIndex(book, cursorKey, learnedWords) {
+        if (!book || !cursorKey || !learnedWords.length) {
             return 0;
         }
         const cursor = state.voluntaryReviewCursors?.[cursorKey] || {};
@@ -1465,7 +1465,17 @@
         if (lastIndex >= 0) {
             return (lastIndex + 1) % learnedWords.length;
         }
-        return clamp(cursor.nextIndex || 0, 0, Math.max(0, learnedWords.length - 1));
+        if (Number.isFinite(Number(cursor.nextIndex))) {
+            return clamp(cursor.nextIndex, 0, Math.max(0, learnedWords.length - 1));
+        }
+        // Migrate previous自主复习 history: before cursors existed the first
+        // words usually have a larger voluntaryReviewCount. Start at the first
+        // least-reviewed word so an existing user does not repeat that prefix.
+        const counts = learnedWords.map(
+            (word) => Number(getProgress(book.id, word.id).voluntaryReviewCount || 0)
+        );
+        const minimum = Math.min(...counts);
+        return Math.max(0, counts.findIndex((count) => count === minimum));
     }
 
     function advanceVoluntaryReviewCursor(cursorKey, wordId, orderedWordIds) {
@@ -1492,7 +1502,7 @@
             (word) => getProgress(book.id, word.id).lastReviewed
         );
         if (strategy === "sequential") {
-            const startIndex = voluntaryReviewStartIndex(cursorKey, learned);
+            const startIndex = voluntaryReviewStartIndex(book, cursorKey, learned);
             return [...learned.slice(startIndex), ...learned.slice(0, startIndex)];
         }
         if (strategy === "random") {
@@ -4051,6 +4061,7 @@
         const groupIds = form.elements.scope.value ? [form.elements.scope.value] : [];
         const learnedWords = voluntaryReviewScopeWords(book, form.elements.scope.value);
         const startIndex = voluntaryReviewStartIndex(
+            book,
             voluntaryReviewCursorKey(book.id, groupIds),
             learnedWords
         );
