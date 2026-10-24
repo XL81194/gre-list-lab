@@ -188,7 +188,7 @@
                 </div>
                 <form id="voluntary-review-form">
                     <label><span>复习范围</span><small>可以复习整本词书，也可以只复习某个 Day / List</small><select name="scope" aria-label="自主复习范围"></select></label>
-                    <label><span>抽词方式</span><small>“均衡轮换”会优先选择自主复习次数较少、较久没练的词</small><select name="strategy" aria-label="自主复习抽词方式"><option value="balanced">全部已学词 · 均衡轮换</option><option value="weak">模糊与薄弱词优先</option><option value="random">全部已学词 · 随机抽取</option></select></label>
+                    <label><span>抽词方式</span><small>“按顺序续刷”会记住每个 List 上次刷到的位置</small><select name="strategy" aria-label="自主复习抽词方式"><option value="sequential">按原书顺序续刷 · 记住位置</option><option value="balanced">全部已学词 · 均衡轮换</option><option value="weak">模糊与薄弱词优先</option><option value="random">全部已学词 · 随机抽取</option></select></label>
                     <label><span>本次数量</span><small>只会从已经学过的词中抽取</small><input name="reviewCount" type="number" min="1" max="100" value="20" required></label>
                     <label><span>练习方式</span><small>词义模式使用认识判断、四选一和中文释义填空</small><select name="studyMode" aria-label="自主复习练习方式"><option value="meaning">快速刷词义</option><option value="spelling">拼写检测</option></select></label>
                     <div class="voluntary-review-note" data-review-preview>自主复习不会改变原计划中的到期复习日期。</div>
@@ -287,8 +287,8 @@
 
         <script src="books.js"></script>
         <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-        <script src="supabase-config.js?v=20260829-sync5"></script>
-        <script src="gre-vocab-app.js?v=20260829-sync5"></script>
-        <script src="cloud-sync.js?v=20260829-sync5"></script>
+        <script src="supabase-config.js?v=20261024-review-cursor"></script>
+        <script src="gre-vocab-app.js?v=20261024-review-cursor"></script>
+        <script src="cloud-sync.js?v=20261024-review-cursor"></script>
     </body>
 </html>

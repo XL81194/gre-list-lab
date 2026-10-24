@@ -76,6 +76,7 @@ source = source.replace(
         mergeStates,
         mergeSprint,
         stateContent,
+        mergeReviewCursors,
     };
 })(window, document);
 `
@@ -214,6 +215,20 @@ assert.notEqual(
     api.stateContent(identicalLocal),
     "真实学习进度变化必须触发界面更新"
 );
+
+const mergedCursors = api.mergeReviewCursors(
+    {
+        "gre3000:list-1": { nextIndex: 20, updatedAt: "2026-10-24T08:00:00.000Z" },
+        "gre3000:list-2": { nextIndex: 5, updatedAt: "2026-10-24T09:00:00.000Z" },
+    },
+    {
+        "gre3000:list-1": { nextIndex: 10, updatedAt: "2026-10-23T08:00:00.000Z" },
+        "gre3000:list-3": { nextIndex: 8, updatedAt: "2026-10-24T07:00:00.000Z" },
+    }
+);
+assert.equal(mergedCursors["gre3000:list-1"].nextIndex, 20);
+assert.equal(mergedCursors["gre3000:list-2"].nextIndex, 5);
+assert.equal(mergedCursors["gre3000:list-3"].nextIndex, 8);
 
 const sprintOnlyLocal = {
     lastReviewed: "2026-08-20T00:00:00.000Z",

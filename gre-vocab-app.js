@@ -112,6 +112,7 @@
             progress: {},
             notes: {},
             calendarChecks: {},
+            voluntaryReviewCursors: {},
             savedSession: null,
             plans,
             sprint: { ...DEFAULT_SPRINT },
@@ -140,6 +141,10 @@
                 calendarChecks:
                     saved.calendarChecks && typeof saved.calendarChecks === "object"
                         ? saved.calendarChecks
+                        : {},
+                voluntaryReviewCursors:
+                    saved.voluntaryReviewCursors && typeof saved.voluntaryReviewCursors === "object"
+                        ? saved.voluntaryReviewCursors
                         : {},
                 sprint: {
                     ...DEFAULT_SPRINT,
@@ -1442,10 +1447,54 @@
             });
     }
 
-    function voluntaryReviewWords(book, scopeWords, strategy = "balanced") {
+    function voluntaryReviewCursorKey(bookId, groupIds = []) {
+        const scope = Array.isArray(groupIds) && groupIds.length
+            ? groupIds.join(",")
+            : "all";
+        return `${bookId}:${scope}`;
+    }
+
+    function voluntaryReviewStartIndex(cursorKey, learnedWords) {
+        if (!cursorKey || !learnedWords.length) {
+            return 0;
+        }
+        const cursor = state.voluntaryReviewCursors?.[cursorKey] || {};
+        const lastIndex = cursor.lastWordId
+            ? learnedWords.findIndex((word) => word.id === cursor.lastWordId)
+            : -1;
+        if (lastIndex >= 0) {
+            return (lastIndex + 1) % learnedWords.length;
+        }
+        return clamp(cursor.nextIndex || 0, 0, Math.max(0, learnedWords.length - 1));
+    }
+
+    function advanceVoluntaryReviewCursor(cursorKey, wordId, orderedWordIds) {
+        if (!cursorKey || !wordId || !Array.isArray(orderedWordIds) || !orderedWordIds.length) {
+            return;
+        }
+        const index = orderedWordIds.indexOf(wordId);
+        if (index < 0) {
+            return;
+        }
+        state.voluntaryReviewCursors = {
+            ...(state.voluntaryReviewCursors || {}),
+            [cursorKey]: {
+                lastWordId: wordId,
+                nextIndex: (index + 1) % orderedWordIds.length,
+                total: orderedWordIds.length,
+                updatedAt: new Date().toISOString(),
+            },
+        };
+    }
+
+    function voluntaryReviewWords(book, scopeWords, strategy = "sequential", cursorKey = "") {
         const learned = (scopeWords || allWords(book)).filter(
             (word) => getProgress(book.id, word.id).lastReviewed
         );
+        if (strategy === "sequential") {
+            const startIndex = voluntaryReviewStartIndex(cursorKey, learned);
+            return [...learned.slice(startIndex), ...learned.slice(0, startIndex)];
+        }
         if (strategy === "random") {
             return shuffle(learned);
         }
@@ -1946,6 +1995,13 @@
               ? scopedGroups.flatMap((group) => group.words)
               : allWords(book);
         let candidates = [];
+        const voluntaryCursorKey = voluntaryReviewCursorKey(
+            book.id,
+            scopedGroups.map((group) => group.id)
+        );
+        const voluntaryOrderIds = scopedWords
+            .filter((word) => getProgress(book.id, word.id).lastReviewed)
+            .map((word) => word.id);
 
         const groupSize = clamp(state.settings.dailyNew, 1, BATCH_SIZE);
         if (mode === "new" || mode === "group-new") {
@@ -1983,7 +2039,8 @@
             candidates = voluntaryReviewWords(
                 book,
                 scopedWords,
-                options.reviewStrategy || "balanced"
+                options.reviewStrategy || "sequential",
+                voluntaryCursorKey
             ).slice(0, clamp(options.reviewCount || groupSize, 1, 100));
         } else {
             candidates = scopedWords.filter(
@@ -2021,6 +2078,11 @@
                 options.studyMode !== "spelling" &&
                 !isEquivalentBook(book),
             isVoluntaryReview: mode === "voluntary-review",
+            voluntaryReviewStrategy: options.reviewStrategy || "sequential",
+            voluntaryReviewCursorKey:
+                mode === "voluntary-review" ? voluntaryCursorKey : null,
+            voluntaryReviewOrderIds:
+                mode === "voluntary-review" ? voluntaryOrderIds : [],
             sourceTaskKey: options.taskKey || null,
             sourceTaskType: options.taskType || null,
             sourceGroupIds: scopedGroups.map((group) => group.id),
@@ -3570,6 +3632,13 @@
                     voluntaryReviewLast: now.toISOString(),
                     voluntaryReviewLastQuality: quality,
                 };
+                if (session.voluntaryReviewStrategy === "sequential") {
+                    advanceVoluntaryReviewCursor(
+                        session.voluntaryReviewCursorKey,
+                        word.id,
+                        session.voluntaryReviewOrderIds
+                    );
+                }
             }
             if (session.isSprint) {
                 const sprint = sprintWordState(nextProgress);
@@ -3979,8 +4048,17 @@
         }
         const available = voluntaryReviewScopeWords(book, form.elements.scope.value).length;
         const requested = clamp(form.elements.reviewCount.value || 20, 1, 100);
+        const groupIds = form.elements.scope.value ? [form.elements.scope.value] : [];
+        const learnedWords = voluntaryReviewScopeWords(book, form.elements.scope.value);
+        const startIndex = voluntaryReviewStartIndex(
+            voluntaryReviewCursorKey(book.id, groupIds),
+            learnedWords
+        );
+        const sequentialNote = form.elements.strategy.value === "sequential"
+            ? ` 将从第 ${startIndex + 1} 个已学词继续，完成后位置自动保存。`
+            : "";
         preview.textContent = available
-            ? `当前范围有 ${available} 个已学词，本次将抽取 ${Math.min(available, requested)} 个。自主复习不会改变原计划中的到期日期。`
+            ? `当前范围有 ${available} 个已学词，本次将练习 ${Math.min(available, requested)} 个。${sequentialNote}自主复习不会改变原计划中的到期日期。`
             : "当前范围还没有已学词。自主复习只从已经学习过的内容中抽取。";
     }
 
@@ -4012,7 +4090,7 @@
         form.elements.scope.value = groupOptions.some((item) => item.group.id === groupId)
             ? groupId
             : "";
-        form.elements.strategy.value = "balanced";
+        form.elements.strategy.value = "sequential";
         form.elements.reviewCount.value = Math.min(20, Math.max(1, totalLearned || 20));
         form.elements.studyMode.value = "meaning";
         updateVoluntaryReviewPreview();

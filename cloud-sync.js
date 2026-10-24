@@ -356,6 +356,17 @@
         return result;
     }
 
+    function mergeReviewCursors(localCursors, remoteCursors) {
+        const result = { ...(remoteCursors || {}) };
+        Object.entries(localCursors || {}).forEach(([key, localCursor]) => {
+            const remoteCursor = result[key];
+            result[key] = !remoteCursor || timestamp(localCursor?.updatedAt) >= timestamp(remoteCursor?.updatedAt)
+                ? localCursor
+                : remoteCursor;
+        });
+        return result;
+    }
+
     function mergeStates(localState, remoteState, remoteUpdatedAt = null) {
         if (!localState) {
             return remoteState;
@@ -393,6 +404,10 @@
             },
             progress: mergeProgress(localState.progress, remoteState.progress),
             calendarChecks: mergeChecks(localState.calendarChecks, remoteState.calendarChecks),
+            voluntaryReviewCursors: mergeReviewCursors(
+                localState.voluntaryReviewCursors,
+                remoteState.voluntaryReviewCursors
+            ),
             sprint: mergeSprint(localState.sprint, remoteState.sprint, preferLocal),
             savedSession: primary.savedSession || secondary.savedSession || null,
         };

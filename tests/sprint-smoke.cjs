@@ -104,6 +104,10 @@ source = source.replace(
         coreChineseMeaning,
         semanticDirection,
         importantEquivalents,
+        voluntaryReviewCursorKey,
+        voluntaryReviewStartIndex,
+        advanceVoluntaryReviewCursor,
+        voluntaryReviewWords,
         allWords,
         getBook: (bookId) => BOOKS.find((book) => book.id === bookId),
         constants: { STORAGE_KEY, SPRINT_RECALL_LIMIT_MS, SPRINT_REVIEW_OFFSETS },
@@ -117,6 +121,11 @@ const api = window.__SPRINT_TEST__;
 const loaded = api.getState();
 assert.equal(api.constants.STORAGE_KEY, "gre-list-lab-state-v1");
 assert.equal(loaded.sprint.enabled, false);
+assert.deepEqual(
+    JSON.parse(JSON.stringify(loaded.voluntaryReviewCursors)),
+    {},
+    "旧进度升级后应安全补充空的续刷位置"
+);
 assert.equal(loaded.notes["gre3000-list-1-1"], "旧笔记");
 assert.ok(Number.isInteger(api.sprintFullStudyDays()) && api.sprintFullStudyDays() >= 0);
 assert.deepEqual(
@@ -223,4 +232,38 @@ assert.deepEqual(
     "冲刺计划复习间隔必须是0、1、2、4、7天"
 );
 
-console.log("Sprint smoke checks passed: legacy state, 2.5s downgrade, red pool, sprint schedule.");
+const reviewWords = api.allWords(book).slice(0, 45);
+loaded.progress[book.id] = loaded.progress[book.id] || {};
+reviewWords.forEach((reviewWord) => {
+    loaded.progress[book.id][reviewWord.id] = {
+        ...loaded.progress[book.id][reviewWord.id],
+        lastReviewed: "2026-10-24T08:00:00.000Z",
+    };
+});
+const cursorKey = api.voluntaryReviewCursorKey(book.id, [book.groups[0].id]);
+const orderedIds = reviewWords.map((reviewWord) => reviewWord.id);
+const firstBatch = api.voluntaryReviewWords(book, reviewWords, "sequential", cursorKey).slice(0, 20);
+assert.deepEqual(
+    firstBatch.map((reviewWord) => reviewWord.id),
+    orderedIds.slice(0, 20),
+    "第一次顺序复习应从 List 开头取20词"
+);
+firstBatch.forEach((reviewWord) => {
+    api.advanceVoluntaryReviewCursor(cursorKey, reviewWord.id, orderedIds);
+});
+const secondBatch = api.voluntaryReviewWords(book, reviewWords, "sequential", cursorKey).slice(0, 20);
+assert.deepEqual(
+    secondBatch.map((reviewWord) => reviewWord.id),
+    orderedIds.slice(20, 40),
+    "完成前20词后再次打开应继续第21至40词"
+);
+secondBatch.slice(0, 5).forEach((reviewWord) => {
+    api.advanceVoluntaryReviewCursor(cursorKey, reviewWord.id, orderedIds);
+});
+assert.equal(
+    api.voluntaryReviewWords(book, reviewWords, "sequential", cursorKey)[0].id,
+    orderedIds[25],
+    "中途退出后应从最后完成词的下一词继续"
+);
+
+console.log("Sprint smoke checks passed: legacy state, sprint rules, and sequential List review cursor.");
