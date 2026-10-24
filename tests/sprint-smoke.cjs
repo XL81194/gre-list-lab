@@ -135,6 +135,11 @@ assert.deepEqual(
     {},
     "旧进度升级后应安全补充空的等价词复刷位置"
 );
+assert.deepEqual(
+    JSON.parse(JSON.stringify(loaded.bookResetAt)),
+    {},
+    "旧进度升级后应安全补充空的词书清零记录"
+);
 assert.equal(loaded.notes["gre3000-list-1-1"], "旧笔记");
 assert.ok(Number.isInteger(api.sprintFullStudyDays()) && api.sprintFullStudyDays() >= 0);
 assert.deepEqual(

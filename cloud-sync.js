@@ -367,6 +367,36 @@
         return result;
     }
 
+    function mergeBookResets(localResets, remoteResets) {
+        const result = { ...(remoteResets || {}) };
+        Object.entries(localResets || {}).forEach(([bookId, resetAt]) => {
+            result[bookId] = laterDate(resetAt, result[bookId]);
+        });
+        return result;
+    }
+
+    function applyBookResets(progress, cursors, bookResets) {
+        const nextProgress = { ...(progress || {}) };
+        const nextCursors = { ...(cursors || {}) };
+        Object.entries(bookResets || {}).forEach(([bookId, resetAt]) => {
+            const resetTime = timestamp(resetAt);
+            nextProgress[bookId] = Object.fromEntries(
+                Object.entries(nextProgress[bookId] || {}).filter(
+                    ([, wordProgress]) => activityTime(wordProgress) > resetTime
+                )
+            );
+            Object.keys(nextCursors).forEach((key) => {
+                if (
+                    key.startsWith(`${bookId}:`) &&
+                    timestamp(nextCursors[key]?.updatedAt) <= resetTime
+                ) {
+                    delete nextCursors[key];
+                }
+            });
+        });
+        return { progress: nextProgress, cursors: nextCursors };
+    }
+
     function mergeStates(localState, remoteState, remoteUpdatedAt = null) {
         if (!localState) {
             return remoteState;
@@ -384,6 +414,19 @@
         const preferLocal = localTime >= remoteTime;
         const primary = preferLocal ? localState : remoteState;
         const secondary = preferLocal ? remoteState : localState;
+        const bookResetAt = mergeBookResets(localState.bookResetAt, remoteState.bookResetAt);
+        const mergedProgress = mergeProgress(localState.progress, remoteState.progress);
+        const mergedVoluntaryCursors = mergeReviewCursors(
+            localState.voluntaryReviewCursors,
+            remoteState.voluntaryReviewCursors
+        );
+        const mergedEquivalenceCursors = mergeReviewCursors(
+            localState.equivalenceReplayCursors,
+            remoteState.equivalenceReplayCursors
+        );
+        const resetProgress = applyBookResets(mergedProgress, {}, bookResetAt).progress;
+        const resetVoluntaryCursors = applyBookResets({}, mergedVoluntaryCursors, bookResetAt).cursors;
+        const resetEquivalenceCursors = applyBookResets({}, mergedEquivalenceCursors, bookResetAt).cursors;
         return {
             ...secondary,
             ...primary,
@@ -402,16 +445,11 @@
                 ...(secondary.notes || {}),
                 ...(primary.notes || {}),
             },
-            progress: mergeProgress(localState.progress, remoteState.progress),
+            progress: resetProgress,
+            bookResetAt,
             calendarChecks: mergeChecks(localState.calendarChecks, remoteState.calendarChecks),
-            voluntaryReviewCursors: mergeReviewCursors(
-                localState.voluntaryReviewCursors,
-                remoteState.voluntaryReviewCursors
-            ),
-            equivalenceReplayCursors: mergeReviewCursors(
-                localState.equivalenceReplayCursors,
-                remoteState.equivalenceReplayCursors
-            ),
+            voluntaryReviewCursors: resetVoluntaryCursors,
+            equivalenceReplayCursors: resetEquivalenceCursors,
             sprint: mergeSprint(localState.sprint, remoteState.sprint, preferLocal),
             savedSession: primary.savedSession || secondary.savedSession || null,
         };

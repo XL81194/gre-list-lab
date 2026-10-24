@@ -112,6 +112,7 @@
             progress: {},
             notes: {},
             calendarChecks: {},
+            bookResetAt: {},
             voluntaryReviewCursors: {},
             equivalenceReplayCursors: {},
             savedSession: null,
@@ -142,6 +143,10 @@
                 calendarChecks:
                     saved.calendarChecks && typeof saved.calendarChecks === "object"
                         ? saved.calendarChecks
+                        : {},
+                bookResetAt:
+                    saved.bookResetAt && typeof saved.bookResetAt === "object"
+                        ? saved.bookResetAt
                         : {},
                 voluntaryReviewCursors:
                     saved.voluntaryReviewCursors && typeof saved.voluntaryReviewCursors === "object"
@@ -4132,6 +4137,40 @@
         }
     }
 
+    function resetCurrentBookProgress() {
+        const book = currentBook();
+        if (!book) {
+            return;
+        }
+        const confirmed = window.confirm(
+            `确定清空《${book.title}》的全部学习进度吗？其他词书和学习设置不会受影响。`
+        );
+        if (!confirmed) {
+            return;
+        }
+        const resetAt = new Date().toISOString();
+        state.progress = { ...(state.progress || {}), [book.id]: {} };
+        state.bookResetAt = { ...(state.bookResetAt || {}), [book.id]: resetAt };
+        state.voluntaryReviewCursors = Object.fromEntries(
+            Object.entries(state.voluntaryReviewCursors || {}).filter(
+                ([key]) => !key.startsWith(`${book.id}:`)
+            )
+        );
+        state.equivalenceReplayCursors = Object.fromEntries(
+            Object.entries(state.equivalenceReplayCursors || {}).filter(
+                ([key]) => !key.startsWith(`${book.id}:`)
+            )
+        );
+        if (state.savedSession?.bookId === book.id) {
+            state.savedSession = null;
+        }
+        session = session?.bookId === book.id ? null : session;
+        saveState();
+        closeSettings();
+        render();
+        toast(`《${book.title}》的学习进度已清零，其他词书保持不变。`);
+    }
+
     function voluntaryReviewScopeWords(book, groupId) {
         if (!book) {
             return [];
@@ -4353,6 +4392,8 @@
             openSettings();
         } else if (action === "close-settings") {
             closeSettings();
+        } else if (action === "reset-current-book-progress") {
+            resetCurrentBookProgress();
         } else if (action === "open-book-import") {
             openBookImport();
         } else if (action === "close-book-import") {

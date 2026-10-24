@@ -258,6 +258,39 @@ assert.equal(
     "等价词复刷位置应随云同步合并且保留较新的设备进度"
 );
 
+const resetEquivalentBook = api.mergeStates(
+    {
+        updatedAt: "2026-10-24T10:00:00.000Z",
+        progress: { equivalents: {}, gre3000: { keep: { lastReviewed: "2026-10-24T09:00:00.000Z" } } },
+        bookResetAt: { equivalents: "2026-10-24T10:00:00.000Z" },
+        equivalenceReplayCursors: {},
+    },
+    {
+        updatedAt: "2026-10-24T09:00:00.000Z",
+        progress: {
+            equivalents: { old: { lastReviewed: "2026-10-23T08:00:00.000Z" } },
+            gre3000: { keep: { lastReviewed: "2026-10-24T09:00:00.000Z" } },
+        },
+        equivalenceReplayCursors: {
+            "equivalents:pass-1:groups:day-1": {
+                nextIndex: 20,
+                updatedAt: "2026-10-23T08:00:00.000Z",
+            },
+        },
+    }
+);
+assert.deepEqual(
+    Object.keys(resetEquivalentBook.progress.equivalents),
+    [],
+    "词书清零记录必须阻止旧云端单词进度恢复"
+);
+assert.ok(resetEquivalentBook.progress.gre3000.keep, "清空等价词书不能影响其他词书");
+assert.equal(
+    resetEquivalentBook.equivalenceReplayCursors["equivalents:pass-1:groups:day-1"],
+    undefined,
+    "词书清零时必须同步移除旧的复刷位置"
+);
+
 const sprintOnlyLocal = {
     lastReviewed: "2026-08-20T00:00:00.000Z",
     sprint: {

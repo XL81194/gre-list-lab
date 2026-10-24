@@ -139,6 +139,13 @@
                         <input data-field="progress-file" type="file" accept=".json,application/json" hidden>
                     </div>
                 </div>
+                <div class="data-tools">
+                    <strong>清空当前词书进度</strong>
+                    <p>只清空当前选中的词书；其他词书、学习设置和登录状态都会保留。</p>
+                    <div>
+                        <button class="button button-ghost text-danger" type="button" data-action="reset-current-book-progress">清空当前词书进度</button>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -287,8 +294,8 @@
 
         <script src="books.js"></script>
         <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-        <script src="supabase-config.js?v=20261024-equivalence-cursor"></script>
-        <script src="gre-vocab-app.js?v=20261024-equivalence-cursor"></script>
-        <script src="cloud-sync.js?v=20261024-equivalence-cursor"></script>
+        <script src="supabase-config.js?v=20261024-book-reset"></script>
+        <script src="gre-vocab-app.js?v=20261024-book-reset"></script>
+        <script src="cloud-sync.js?v=20261024-book-reset"></script>
     </body>
 </html>
