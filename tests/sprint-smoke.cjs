@@ -108,6 +108,10 @@ source = source.replace(
         voluntaryReviewStartIndex,
         advanceVoluntaryReviewCursor,
         voluntaryReviewWords,
+        equivalenceReplayCursorKey,
+        equivalenceReplayStartIndex,
+        equivalenceReplayWords,
+        advanceEquivalenceReplayCursor,
         allWords,
         getBook: (bookId) => BOOKS.find((book) => book.id === bookId),
         constants: { STORAGE_KEY, SPRINT_RECALL_LIMIT_MS, SPRINT_REVIEW_OFFSETS },
@@ -125,6 +129,11 @@ assert.deepEqual(
     JSON.parse(JSON.stringify(loaded.voluntaryReviewCursors)),
     {},
     "旧进度升级后应安全补充空的续刷位置"
+);
+assert.deepEqual(
+    JSON.parse(JSON.stringify(loaded.equivalenceReplayCursors)),
+    {},
+    "旧进度升级后应安全补充空的等价词复刷位置"
 );
 assert.equal(loaded.notes["gre3000-list-1-1"], "旧笔记");
 assert.ok(Number.isInteger(api.sprintFullStudyDays()) && api.sprintFullStudyDays() >= 0);
@@ -264,6 +273,55 @@ assert.equal(
     api.voluntaryReviewWords(book, reviewWords, "sequential", cursorKey)[0].id,
     orderedIds[25],
     "中途退出后应从最后完成词的下一词继续"
+);
+
+const equivalenceBook = api.getBook("equivalents");
+const equivalenceWords = api.allWords(equivalenceBook).slice(0, 55);
+const equivalenceCursorKey = api.equivalenceReplayCursorKey(
+    equivalenceBook.id,
+    2,
+    [equivalenceBook.groups[0].id]
+);
+const equivalenceIds = equivalenceWords.map((equivalenceWord) => equivalenceWord.id);
+const firstEquivalenceBatch = api.equivalenceReplayWords(
+    equivalenceCursorKey,
+    equivalenceWords
+).slice(0, 25);
+assert.deepEqual(
+    firstEquivalenceBatch.map((equivalenceWord) => equivalenceWord.id),
+    equivalenceIds.slice(0, 25),
+    "等价词完成某一遍后的首次复刷应从该范围开头开始"
+);
+firstEquivalenceBatch.forEach((equivalenceWord) => {
+    api.advanceEquivalenceReplayCursor(
+        equivalenceCursorKey,
+        equivalenceWord.id,
+        equivalenceIds
+    );
+});
+assert.deepEqual(
+    api.equivalenceReplayWords(equivalenceCursorKey, equivalenceWords)
+        .slice(0, 25)
+        .map((equivalenceWord) => equivalenceWord.id),
+    equivalenceIds.slice(25, 50),
+    "等价词完成前25组后再次进入应继续第26至50组"
+);
+
+delete loaded.equivalenceReplayCursors[equivalenceCursorKey];
+loaded.progress[equivalenceBook.id] = loaded.progress[equivalenceBook.id] || {};
+equivalenceWords.forEach((equivalenceWord, index) => {
+    loaded.progress[equivalenceBook.id][equivalenceWord.id] = {
+        equivalence: {
+            passes: {
+                2: { completedAt: "2026-10-20T08:00:00.000Z", attempts: index < 20 ? 2 : 1 },
+            },
+        },
+    };
+});
+assert.equal(
+    api.equivalenceReplayWords(equivalenceCursorKey, equivalenceWords)[0].id,
+    equivalenceIds[20],
+    "升级前已经复刷前20组时，应根据答题次数从第21组继续"
 );
 
 delete loaded.voluntaryReviewCursors[cursorKey];

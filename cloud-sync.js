@@ -408,6 +408,10 @@
                 localState.voluntaryReviewCursors,
                 remoteState.voluntaryReviewCursors
             ),
+            equivalenceReplayCursors: mergeReviewCursors(
+                localState.equivalenceReplayCursors,
+                remoteState.equivalenceReplayCursors
+            ),
             sprint: mergeSprint(localState.sprint, remoteState.sprint, preferLocal),
             savedSession: primary.savedSession || secondary.savedSession || null,
         };

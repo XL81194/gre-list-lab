@@ -113,6 +113,7 @@
             notes: {},
             calendarChecks: {},
             voluntaryReviewCursors: {},
+            equivalenceReplayCursors: {},
             savedSession: null,
             plans,
             sprint: { ...DEFAULT_SPRINT },
@@ -145,6 +146,10 @@
                 voluntaryReviewCursors:
                     saved.voluntaryReviewCursors && typeof saved.voluntaryReviewCursors === "object"
                         ? saved.voluntaryReviewCursors
+                        : {},
+                equivalenceReplayCursors:
+                    saved.equivalenceReplayCursors && typeof saved.equivalenceReplayCursors === "object"
+                        ? saved.equivalenceReplayCursors
                         : {},
                 sprint: {
                     ...DEFAULT_SPRINT,
@@ -870,7 +875,7 @@
             ? todayTasks.map((task) => `
                 <div class="plan-task ${task.done ? "is-done" : ""}">
                     <span class="plan-task-icon">${task.equivalencePass}</span>
-                    <span>${escapeHtml(task.label)} · ${task.done ? "已完成" : "每次 25 组"}</span>
+                    <span>${escapeHtml(task.label)} · ${task.done ? "已完成" : `每次 ${equivalenceBatchSize()} 组`}</span>
                 </div>
             `).join("")
             : `<div class="plan-task"><span class="plan-task-icon">→</span><span>今天没有固定任务，可继续下一遍或处理到期弱项。</span></div>`;
@@ -970,7 +975,7 @@
         const cells = calendarCells(ui.calendarMonth);
         const selectedTasks = plan.filter((task) => task.date === ui.calendarSelectedDate);
         target.innerHTML = `
-            <div class="page-heading"><div><span class="eyebrow">14 DAYS · FIVE PURPOSEFUL PASSES</span><h1 id="calendar-title">等价词两周计划</h1><p>前四遍覆盖全书，第五遍完成语境迁移；每天按原书顺序拆成 25 组小循环。调整开始日期只重排日历，不清空任何进度。</p></div></div>
+            <div class="page-heading"><div><span class="eyebrow">14 DAYS · FIVE PURPOSEFUL PASSES</span><h1 id="calendar-title">等价词两周计划</h1><p>前四遍覆盖全书，第五遍完成语境迁移；每天按原书顺序拆成 ${equivalenceBatchSize()} 组小循环。调整开始日期只重排日历，不清空任何进度。</p></div></div>
             <div class="calendar-layout">
                 <section class="calendar-card">
                     <div class="calendar-controls"><div class="calendar-controls-left"><button class="icon-button" type="button" data-action="calendar-prev" aria-label="上个月">‹</button><strong class="calendar-month">${escapeHtml(monthTitle)}</strong><button class="icon-button" type="button" data-action="calendar-next" aria-label="下个月">›</button></div><div class="calendar-controls-right"><label>开始日期 <input data-field="plan-start" type="date" value="${escapeHtml(startDate)}"></label><button class="button button-soft" type="button" data-action="calendar-today">今天</button></div></div>
@@ -982,7 +987,7 @@
                         return `<div class="calendar-day ${date.getMonth() !== ui.calendarMonth.getMonth() ? "is-other" : ""} ${sameDate(date, new Date()) ? "is-today" : ""}" data-action="select-calendar-date" data-date="${dateKey}"><span class="day-number">${date.getDate()}</span><div class="day-tasks">${tasks.map((task) => `<button class="day-task equivalence-day-task pass-${task.equivalencePass} ${task.done ? "is-done" : ""}" type="button" data-action="select-calendar-date" data-date="${dateKey}"><span class="day-task-dot"></span><span>${task.equivalencePass} · ${escapeHtml(task.label.replace(/^第 \d 遍 · /, ""))}</span></button>`).join("")}</div></div>`;
                     }).join("")}</div>
                 </section>
-                <aside class="agenda-card"><div><span class="eyebrow">AGENDA</span><h2>${escapeHtml(formatLongDate(ui.calendarSelectedDate))}</h2><p>${selectedTasks.length ? `${selectedTasks.length} 项等价词任务` : "今天没有固定任务"}</p><div class="plan-note">计划从 ${startDate} 开始，共 14 天。完成度由实际答过的词组自动计算。</div></div><div class="agenda-list">${selectedTasks.length ? selectedTasks.map((task) => `<div class="agenda-item ${task.done ? "is-done" : ""}"><div class="agenda-item-head"><span class="agenda-pass-number">${task.equivalencePass}</span><span><strong>${escapeHtml(task.label)}</strong><small>${task.done ? "这一范围已经完成" : "按原书顺序，每次继续 25 组"}</small></span></div><button class="button button-soft" type="button" data-action="start-plan-task" data-task-key="${escapeHtml(task.key)}">${task.done ? "再次练习" : "开始这项任务"}</button></div>`).join("") : `<div class="empty-state">选中有任务的日期开始学习。</div>`}</div></aside>
+                <aside class="agenda-card"><div><span class="eyebrow">AGENDA</span><h2>${escapeHtml(formatLongDate(ui.calendarSelectedDate))}</h2><p>${selectedTasks.length ? `${selectedTasks.length} 项等价词任务` : "今天没有固定任务"}</p><div class="plan-note">计划从 ${startDate} 开始，共 14 天。完成度由实际答过的词组自动计算。</div></div><div class="agenda-list">${selectedTasks.length ? selectedTasks.map((task) => `<div class="agenda-item ${task.done ? "is-done" : ""}"><div class="agenda-item-head"><span class="agenda-pass-number">${task.equivalencePass}</span><span><strong>${escapeHtml(task.label)}</strong><small>${task.done ? "这一范围已经完成" : `按原书顺序，每次继续 ${equivalenceBatchSize()} 组`}</small></span></div><button class="button button-soft" type="button" data-action="start-plan-task" data-task-key="${escapeHtml(task.key)}">${task.done ? "再次练习" : "开始这项任务"}</button></div>`).join("") : `<div class="empty-state">选中有任务的日期开始学习。</div>`}</div></aside>
             </div>
         `;
     }
@@ -1690,6 +1695,76 @@
             );
     }
 
+    function equivalenceBatchSize() {
+        return clamp(state.settings?.dailyNew || EQUIVALENCE_BATCH_SIZE, 1, 100);
+    }
+
+    function equivalenceReplayCursorKey(bookId, pass, groupIds = [], wordIds = []) {
+        const scope = Array.isArray(groupIds) && groupIds.length
+            ? `groups:${groupIds.join(",")}`
+            : Array.isArray(wordIds) && wordIds.length
+              ? `words:${wordIds.join(",")}`
+              : "all";
+        return `${bookId}:pass-${pass}:${scope}`;
+    }
+
+    function equivalenceReplayStartIndex(cursorKey, words) {
+        if (!cursorKey || !Array.isArray(words) || !words.length) {
+            return 0;
+        }
+        const cursor = state.equivalenceReplayCursors?.[cursorKey] || {};
+        const lastIndex = cursor.lastWordId
+            ? words.findIndex((word) => word.id === cursor.lastWordId)
+            : -1;
+        if (lastIndex >= 0) {
+            return (lastIndex + 1) % words.length;
+        }
+        if (Number.isFinite(Number(cursor.nextIndex))) {
+            return clamp(cursor.nextIndex, 0, Math.max(0, words.length - 1));
+        }
+        // Upgrade an existing completed-pass replay without making the user
+        // repeat its already-replayed prefix. A normal first pass gives every
+        // row at least one attempt; earlier replayed rows have a larger count.
+        const pass = Number(cursorKey.match(/:pass-(\d+):/)?.[1] || 0);
+        const book = wordIndex.get(words[0]?.id)?.book;
+        if (book && pass) {
+            const attempts = words.map((word) =>
+                Number(passRecord(book, word, pass).attempts || 0)
+            );
+            const minimum = Math.min(...attempts);
+            const migratedIndex = attempts.findIndex((count) => count === minimum);
+            if (migratedIndex > 0) {
+                return migratedIndex;
+            }
+        }
+        return 0;
+    }
+
+    function equivalenceReplayWords(cursorKey, words) {
+        const ordered = uniqueWords(words || []);
+        const startIndex = equivalenceReplayStartIndex(cursorKey, ordered);
+        return [...ordered.slice(startIndex), ...ordered.slice(0, startIndex)];
+    }
+
+    function advanceEquivalenceReplayCursor(cursorKey, wordId, orderedWordIds) {
+        if (!cursorKey || !wordId || !Array.isArray(orderedWordIds) || !orderedWordIds.length) {
+            return;
+        }
+        const index = orderedWordIds.indexOf(wordId);
+        if (index < 0) {
+            return;
+        }
+        state.equivalenceReplayCursors = {
+            ...(state.equivalenceReplayCursors || {}),
+            [cursorKey]: {
+                lastWordId: wordId,
+                nextIndex: (index + 1) % orderedWordIds.length,
+                total: orderedWordIds.length,
+                updatedAt: new Date().toISOString(),
+            },
+        };
+    }
+
     function startEquivalentStudy(options = {}) {
         const book = currentBook();
         if (!isEquivalentBook(book)) {
@@ -1714,7 +1789,9 @@
                     const nextGroup = book.groups.find((group) =>
                         group.words.some((word) => !passRecord(book, word, pass).completedAt)
                     );
-                    groupIds = nextGroup ? [nextGroup.id] : [book.groups[0]?.id].filter(Boolean);
+                    groupIds = nextGroup
+                        ? [nextGroup.id]
+                        : book.groups.map((group) => group.id);
                 }
             }
             scopedWords = groupIds.flatMap(
@@ -1724,10 +1801,15 @@
         let candidates = options.mode === "weak-review"
             ? scopedWords
             : scopedWords.filter((word) => !passRecord(book, word, pass).completedAt);
-        if (!candidates.length && scopedWords.length) {
-            candidates = scopedWords;
+        const isReplay = options.mode !== "weak-review" && !candidates.length && scopedWords.length > 0;
+        const replayCursorKey = isReplay
+            ? equivalenceReplayCursorKey(book.id, pass, groupIds, wordIds)
+            : "";
+        const replayOrderIds = isReplay ? uniqueWords(scopedWords).map((word) => word.id) : [];
+        if (isReplay) {
+            candidates = equivalenceReplayWords(replayCursorKey, scopedWords);
         }
-        candidates = uniqueWords(candidates).slice(0, EQUIVALENCE_BATCH_SIZE);
+        candidates = uniqueWords(candidates).slice(0, equivalenceBatchSize());
         if (!candidates.length) {
             toast(options.mode === "weak-review" ? "当前没有需要复习的弱项。" : "这一范围已经完成。 ");
             return;
@@ -1739,6 +1821,9 @@
             flowVersion: EQUIVALENCE_FLOW_VERSION,
             equivalencePass: options.mode === "weak-review" ? 4 : pass,
             isWeakReview: options.mode === "weak-review",
+            isEquivalenceReplay: isReplay,
+            equivalenceReplayCursorKey: replayCursorKey,
+            equivalenceReplayOrderIds: replayOrderIds,
             sourceTaskKey: options.taskKey || null,
             sourceTaskType: options.taskType || null,
             sourceGroupIds: groupIds,
@@ -1892,6 +1977,13 @@
         }
         const pass = session.equivalencePass;
         const errorType = quality === "easy" ? "" : equivalentErrorType(pass);
+        if (session.isEquivalenceReplay && !session.current.reinforcement) {
+            advanceEquivalenceReplayCursor(
+                session.equivalenceReplayCursorKey,
+                word.id,
+                session.equivalenceReplayOrderIds
+            );
+        }
         const responseMs = updateEquivalentProgress(book, word, quality, errorType);
         session.attemptsById[word.id] = Number(session.attemptsById[word.id] || 0) + 1;
         const reinforced = queueEquivalentReinforcement(word.id, quality);
@@ -2574,7 +2666,7 @@
                         <button class="save-exit-button" type="button" data-action="save-and-leave-study" aria-label="保存进度并退出">← 保存并退出</button>
                         <div>
                             <h1 id="study-title">${escapeHtml(session.title)}</h1>
-                            <p>${escapeHtml(book?.title || "")} · ${session.isVoluntaryReview ? session.studyMode === "spelling" ? "自主复习 · 拼写检测（不改原计划）" : "自主复习 · 快速刷词义（不改原计划）" : session.studyMode === "spelling" ? "进阶拼写检测" : session.studyMode === "equivalence" ? session.isWeakReview ? "25 组微循环 · 到期弱项复习" : `25 组微循环 · 第 ${session.equivalencePass} 遍 ${EQUIVALENCE_PASS_NAMES[session.equivalencePass]}` : session.isSprint ? `冲刺微循环 · ${session.meaningRound === 1 ? "2.5秒主动提取" : session.meaningRound === 2 ? "四选一验证" : "仅高危词中文输入"}` : `20 词微循环 · ${session.meaningRound === 1 ? "认识判断" : session.meaningRound === 2 ? "英译汉选义" : "中文释义填空"}`}</p>
+                            <p>${escapeHtml(book?.title || "")} · ${session.isVoluntaryReview ? session.studyMode === "spelling" ? "自主复习 · 拼写检测（不改原计划）" : "自主复习 · 快速刷词义（不改原计划）" : session.studyMode === "spelling" ? "进阶拼写检测" : session.studyMode === "equivalence" ? session.isWeakReview ? `${session.totalTarget} 组微循环 · 到期弱项复习` : `${session.totalTarget} 组微循环 · 第 ${session.equivalencePass} 遍 ${EQUIVALENCE_PASS_NAMES[session.equivalencePass]}` : session.isSprint ? `冲刺微循环 · ${session.meaningRound === 1 ? "2.5秒主动提取" : session.meaningRound === 2 ? "四选一验证" : "仅高危词中文输入"}` : `20 词微循环 · ${session.meaningRound === 1 ? "认识判断" : session.meaningRound === 2 ? "英译汉选义" : "中文释义填空"}`}</p>
                         </div>
                     </div>
                     <div class="study-progress">
@@ -2611,9 +2703,12 @@
             const accuracy = session.answeredCount
                 ? Math.round((session.correct / session.answeredCount) * 100)
                 : 0;
+            const completionNote = session.isEquivalenceReplay
+                ? "本次复刷位置已经保存。再次进入这一遍时，会从后续词组继续；刷完整个范围后再从头循环。"
+                : "位置和每个词组的答题记录已经保存。再次进入这一遍时，会严格从后续未完成词组继续。";
             return `
                 <div class="session-finish equivalence-finish">
-                    <div><span class="finish-mark">${session.equivalencePass}</span><h2>本次 ${session.totalTarget} 组完成</h2><p>位置和每个词组的答题记录已经保存。再次进入这一遍时，会严格从后续未完成词组继续。</p><div class="finish-stats"><span><strong>${session.completed}</strong><small>覆盖词组</small></span><span><strong>${accuracy}%</strong><small>直接答对</small></span><span><strong>${session.near + session.wrong}</strong><small>已加入弱项</small></span></div><button class="button button-dark" type="button" data-action="finish-session">返回今日</button></div>
+                    <div><span class="finish-mark">${session.equivalencePass}</span><h2>本次 ${session.totalTarget} 组完成</h2><p>${completionNote}</p><div class="finish-stats"><span><strong>${session.completed}</strong><small>覆盖词组</small></span><span><strong>${accuracy}%</strong><small>直接答对</small></span><span><strong>${session.near + session.wrong}</strong><small>已加入弱项</small></span></div><button class="button button-dark" type="button" data-action="finish-session">返回今日</button></div>
                 </div>
             `;
         }

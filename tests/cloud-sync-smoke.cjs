@@ -230,6 +230,34 @@ assert.equal(mergedCursors["gre3000:list-1"].nextIndex, 20);
 assert.equal(mergedCursors["gre3000:list-2"].nextIndex, 5);
 assert.equal(mergedCursors["gre3000:list-3"].nextIndex, 8);
 
+const mergedEquivalenceCursorState = api.mergeStates(
+    {
+        updatedAt: "2026-10-24T09:00:00.000Z",
+        equivalenceReplayCursors: {
+            "equivalents:pass-2:groups:day-1": {
+                nextIndex: 40,
+                updatedAt: "2026-10-24T09:00:00.000Z",
+            },
+        },
+    },
+    {
+        updatedAt: "2026-10-24T08:00:00.000Z",
+        equivalenceReplayCursors: {
+            "equivalents:pass-2:groups:day-1": {
+                nextIndex: 20,
+                updatedAt: "2026-10-24T08:00:00.000Z",
+            },
+        },
+    }
+);
+assert.equal(
+    mergedEquivalenceCursorState.equivalenceReplayCursors[
+        "equivalents:pass-2:groups:day-1"
+    ].nextIndex,
+    40,
+    "等价词复刷位置应随云同步合并且保留较新的设备进度"
+);
+
 const sprintOnlyLocal = {
     lastReviewed: "2026-08-20T00:00:00.000Z",
     sprint: {
